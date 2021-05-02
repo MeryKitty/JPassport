@@ -34,8 +34,8 @@ public class PerformanceTest
     public static void startup() throws Throwable
     {
         System.setProperty("jpassport.build.home", "out/testing");
-        testFL = PassportFactory.link("libforeign_link", PerfTest.class);
-        testJNA =  Native.load("libforeign_link.dll", PerfTest.class);
+        testFL = PassportFactory.link("foreign_link", PerfTest.class);
+        testJNA =  Native.load("foreign_link", PerfTest.class);
         testJNADirect =  new TestLinkJNADirect.JNADirect();
         testJava = new PureJavaPerf();
     }

@@ -289,6 +289,10 @@ double* mallocDoubles(const int count)
     return ret;
 }
 
+void freeDoubleArray(double *memory) {
+    delete[] memory;
+}
+
 double passStruct(struct PassingData* data)
 {
     double ret = 0;

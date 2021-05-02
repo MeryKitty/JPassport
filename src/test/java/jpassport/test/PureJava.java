@@ -234,7 +234,7 @@ public class PureJava implements TestLink
     }
 
     @Override
-    public void freeMemory(MemoryAddress address) {
+    public void freeDoubleArray(MemoryAddress address) {
     }
 
     @Override

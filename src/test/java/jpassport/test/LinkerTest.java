@@ -17,18 +17,17 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
 import jdk.incubator.foreign.*;
 import jpassport.Utils;
-import org.junit.jupiter.api.BeforeAll;
 import jpassport.PassportFactory;
+import org.junit.Test;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.Assert.*;
 
 public class LinkerTest
 {
+    static final double EPSILON = 1E-5;
+
     static TestLink testFL;
     static TestLink testJNA;
     static TestLink testJNADirect;
@@ -37,22 +36,24 @@ public class LinkerTest
     static List<TestLink> allLinks;
     static List<TestLink> allLinksPtrPtr;
 
-    @BeforeAll
-    public static void startup() throws Throwable
-    {
-        System.setProperty("jpassport.build.home", "out/testing");
+    static {
+        try {
+            System.setProperty("jpassport.build.home", "out/testing");
 
-        testFL = PassportFactory.link("foreign_link", TestLink.class);
-        testJNA =  Native.load("foreign_link", TestLink.class);
-        testJNADirect =  new TestLinkJNADirect.JNADirect();
-        testJava = new PureJava();
+            testFL = PassportFactory.link("foreign_link", TestLink.class);
+            testJNA = Native.load("foreign_link", TestLink.class);
+            testJNADirect = new TestLinkJNADirect.JNADirect();
+            testJava = new PureJava();
 
-        allLinks = List.of(testJava,  testFL, testJNA, testJNADirect);
-        allLinksPtrPtr = List.of(testJava,  testFL);
+            allLinks = List.of(testJava, testFL, testJNA, testJNADirect);
+            allLinksPtrPtr = List.of(testJava, testFL);
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test
-    void testAllocString()
+    public void testAllocString()
     {
         for (TestLink test : allLinksPtrPtr)
         {
@@ -63,36 +64,36 @@ public class LinkerTest
     }
 
     @Test
-    void testD()
+    public void testD()
     {
         for (TestLink test : allLinks)
         {
-            assertEquals(4 + 5, test.sumD(4, 5));
-            assertEquals(1+2+3, test.sumArrD(new double[] {1, 2, 3}, 3));
-            assertEquals(1+2+3+4+5+6, test.sumArrDD(new double[] {1, 2, 3}, new double[] {4, 5, 6}, 3));
+            assertEquals(4 + 5, test.sumD(4, 5), EPSILON);
+            assertEquals(1+2+3, test.sumArrD(new double[] {1, 2, 3}, 3), EPSILON);
+            assertEquals(1+2+3+4+5+6, test.sumArrDD(new double[] {1, 2, 3}, new double[] {4, 5, 6}, 3), EPSILON);
 
             double[] v = new double[1];
             test.readD(v, 5);
-            assertEquals(5, v[0]);
+            assertEquals(5, v[0], EPSILON);
         }
     }
 
     @Test
-    void testF()
+    public void testF()
     {
         for (TestLink test : allLinks)
         {
-            assertEquals(1+2+3, test.sumArrF(new float[] {1, 2, 3}, 3));
+            assertEquals(1+2+3, test.sumArrF(new float[] {1, 2, 3}, 3), EPSILON);
 
             float[] v = new float[1];
             test.readF(v, 5);
-            assertEquals(5, v[0]);
+            assertEquals(5, v[0], EPSILON);
         }
     }
 
 
     @Test
-    void testL()
+    public void testL()
     {
         for (TestLink test : allLinks)
         {
@@ -106,7 +107,7 @@ public class LinkerTest
 
 
     @Test
-    void testI()
+    public void testI()
     {
         int[] testRange = IntStream.range(1, 5).toArray();
         int correct = IntStream.range(1, 5).sum();
@@ -123,7 +124,7 @@ public class LinkerTest
 
 
     @Test
-    void testS()
+    public void testS()
     {
         for (TestLink test : allLinks)
         {
@@ -137,7 +138,7 @@ public class LinkerTest
 
 
     @Test
-    void testB()
+    public void testB()
     {
         for (TestLink test : allLinks)
         {
@@ -150,31 +151,31 @@ public class LinkerTest
     }
 
     @Test
-    void testSumMatD()
+    public void testSumMatD()
     {
         double[][] mat = new double[][] {{1,2,3}, {4,5,6}, {7,8,9}, {10,11,12}};
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatD(mat.length, mat[0].length, mat));
-            assertEquals(correct, test.sumMatDPtrPtr(mat.length, mat[0].length, mat));
+            assertEquals(correct, test.sumMatD(mat.length, mat[0].length, mat), EPSILON);
+            assertEquals(correct, test.sumMatDPtrPtr(mat.length, mat[0].length, mat), EPSILON);
         }
     }
 
     @Test
-    void testSumMatF()
+    public void testSumMatF()
     {
         float[][] mat = new float[][] {{1,2,3}, {4,5,6}, {7,8,9}, {10,11,12}};
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatF(mat.length, mat[0].length, mat));
-            assertEquals(correct, test.sumMatFPtrPtr(mat.length, mat[0].length, mat));
+            assertEquals(correct, test.sumMatF(mat.length, mat[0].length, mat), EPSILON);
+            assertEquals(correct, test.sumMatFPtrPtr(mat.length, mat[0].length, mat), EPSILON);
         }
     }
 
     @Test
-    void testSumMatL()
+    public void testSumMatL()
     {
         long[][] mat = new long[][] {{1,2,3}, {4,5,6}, {7,8,9}, {10,11,12}};
         int correct = IntStream.range(1,13).sum();
@@ -186,7 +187,7 @@ public class LinkerTest
     }
 
     @Test
-    void testSumMatI()
+    public void testSumMatI()
     {
         int[][] mat = new int[][] {{1,2,3}, {4,5,6}, {7,8,9}, {10,11,12}};
         int correct = IntStream.range(1,13).sum();
@@ -198,7 +199,7 @@ public class LinkerTest
     }
 
     @Test
-    void testSumMatS()
+    public void testSumMatS()
     {
         short[][] mat = new short[][] {{1,2,3}, {4,5,6}, {7,8,9}, {10,11,12}};
         int correct = IntStream.range(1,13).sum();
@@ -210,7 +211,7 @@ public class LinkerTest
     }
 
     @Test
-    void testSumMatB()
+    public void testSumMatB()
     {
         byte[][] mat = new byte[][] {{1,2,3}, {4,5,6}, {7,8,9}, {10,11,12}};
         int correct = IntStream.range(1,13).sum();
@@ -222,7 +223,7 @@ public class LinkerTest
     }
 
     @Test
-    void testStrLen()
+    public void testStrLen()
     {
         for (TestLink test : allLinksPtrPtr)
         {
@@ -231,34 +232,37 @@ public class LinkerTest
     }
 
     @Test
-    void testReturnPointer()
+    public void testReturnPointer()
     {
         double[] values = new double[5];
         MemoryAddress address = testFL.mallocDoubles(values.length);
         MemorySegment segment = address.asSegmentRestricted(values.length * Double.BYTES);
         Utils.toArr(values, segment);
 
-        assertArrayEquals(new double[] {0, 1, 2, 3, 4}, values);
+        var expected = new double[] {0, 1, 2, 3, 4};
+        for (int i = 0; i < expected.length; i++) {
+            assertEquals(expected[i], values[i], EPSILON);
+        }
 
-        testFL.freeMemory(address);
+        testFL.freeDoubleArray(address);
     }
 
 
     @Test
-    void testSimpleStruct()
+    public void testSimpleStruct()
     {
-        assertEquals(2+3+4+5, testFL.passStruct(new TestStruct(2, 3, 4, 5)));
+        assertEquals(2+3+4+5, testFL.passStruct(new TestStruct(2, 3, 4, 5)), EPSILON);
     }
 
     @Test
-    void testComplexStruct()
+    public void testComplexStruct()
     {
         TestStruct ts = new TestStruct(1, 2, 3, 4);
         TestStruct tsPtr = new TestStruct(5, 6, 7, 8);
         ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello")};
 
         double d = testFL.passComplex(complex);
-        assertEquals(IntStream.range(1, 9).sum(), d);
+        assertEquals(IntStream.range(1, 9).sum(), d, EPSILON);
         assertEquals(65, complex[0].ID());
         assertEquals(11, complex[0].ts().s_int());
         assertEquals(25, complex[0].tsPtr().s_int());

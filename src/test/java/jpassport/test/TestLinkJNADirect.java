@@ -190,7 +190,7 @@ public class TestLinkJNADirect
         }
 
         @Override
-        public void freeMemory(MemoryAddress address) {
+        public void freeDoubleArray(MemoryAddress address) {
 
         }
 

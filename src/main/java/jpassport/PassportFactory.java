@@ -63,10 +63,11 @@ public class PassportFactory
         Map<String, MethodHandle> methodMap = new HashMap<>();
 
         for (Method method : interfaceMethods) {
-            LibraryLookup.Symbol symb = libLookup.lookup(method.getName()).orElse(null);
-            if (symb == null)
+            var symbOptional = libLookup.lookup(method.getName());
+            if (symbOptional.isEmpty())
                 throw new IllegalArgumentException("Method not found in library: " + method.getName());
 
+            var symb = symbOptional.get();
             Class retType = method.getReturnType();
             Class[] parameters = method.getParameterTypes();
             Class methRet = retType;

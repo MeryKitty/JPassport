@@ -48,7 +48,7 @@ int sumMatBPtrPtr(int rows, int cols, const char ** mat);
 int cstringLength(const char* string);
 char* mallocString(const char* origString);
 double* mallocDoubles(int count);
-void freeMemory(void *memory);
+void freeDoubleArray(double *memory);
 }
 
 struct PassingData

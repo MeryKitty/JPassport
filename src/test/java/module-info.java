@@ -5,9 +5,8 @@ module test.passport {
     requires jpassport;
     requires com.sun.jna;
     requires com.sun.jna.platform;
-    requires org.junit.jupiter.api;
-    requires org.junit.platform.engine;
     requires jmh.core;
+    requires junit;
     requires commons.csv;
 
     exports jpassport.test;

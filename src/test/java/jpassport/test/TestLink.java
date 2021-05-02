@@ -57,7 +57,7 @@ public interface TestLink extends Passport, Library {
 
     String mallocString(String origString);
     MemoryAddress mallocDoubles(int count);
-    void freeMemory(MemoryAddress address);
+    void freeDoubleArray(MemoryAddress address);
 
     double passStruct(TestStruct address);
     double passComplex(@RefArg ComplexStruct[] complexStruct);
