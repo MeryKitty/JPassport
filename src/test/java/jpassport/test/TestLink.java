@@ -17,8 +17,6 @@ import jpassport.Passport;
 import jpassport.annotations.PtrPtrArg;
 import jpassport.annotations.RefArg;
 
-import java.io.File;
-
 public interface TestLink extends Passport, Library {
 
     double sumD(double d, double d2);

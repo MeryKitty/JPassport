@@ -13,8 +13,6 @@ package jpassport.test;
 
 import jdk.incubator.foreign.MemoryAddress;
 
-import java.io.File;
-
 public class PureJava implements TestLink
 {
     @Override

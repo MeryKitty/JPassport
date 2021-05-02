@@ -11,7 +11,6 @@
  */
 package jpassport.test.performance;
 
-import jpassport.annotations.RefArg;
 import jpassport.test.ComplexStruct;
 import jpassport.test.TestStruct;
 

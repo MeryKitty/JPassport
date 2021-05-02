@@ -42,8 +42,8 @@ public class LinkerTest
     {
         System.setProperty("jpassport.build.home", "out/testing");
 
-        testFL = PassportFactory.link("libforeign_link", TestLink.class);
-        testJNA =  Native.load("libforeign_link.dll", TestLink.class);
+        testFL = PassportFactory.link("foreign_link", TestLink.class);
+        testJNA =  Native.load("foreign_link", TestLink.class);
         testJNADirect =  new TestLinkJNADirect.JNADirect();
         testJava = new PureJava();
 

@@ -12,42 +12,44 @@
 #ifndef FL_DLL_LIBRARY_H
 #define FL_DLL_LIBRARY_H
 
-extern double sumD(double d1, double d2);
-extern double sumArrD(const double *arr, int count);
-extern double sumArrDD(const double *arr, const double *arr2, int count);
-extern void readD(double *v, int set);
-extern double sumMatD(int rows, int cols, double mat[rows][cols]);
-extern double sumMatDPtrPtr(int rows, int cols, const double** mat);
+extern "C" {
+double sumD(double d1, double d2);
+double sumArrD(const double *arr, int count);
+double sumArrDD(const double *arr, const double *arr2, int count);
+void readD(double *v, int set);
+double sumMatD(int rows, int cols, const double* mat);
+double sumMatDPtrPtr(int rows, int cols, const double** mat);
 
-extern float sumArrF(const float *arr, int count);
-extern void readF(float *val, float set);
-extern float sumMatF(int rows, int cols, float mat[rows][cols]);
-extern float sumMatFPtrPtr(int rows, int cols, const float** mat);
+float sumArrF(const float *arr, int count);
+void readF(float *val, float set);
+float sumMatF(int rows, int cols, const float* mat);
+float sumMatFPtrPtr(int rows, int cols, const float** mat);
 
-extern long long sumArrL(const long long *arr, long long count);
-extern void readL(long long *val, long long set);
-extern long long sumMatL(int rows, int cols, long long mat[rows][cols]);
-extern long long sumMatLPtrPtr(int rows, int cols, const long long** mat);
+long long sumArrL(const long long *arr, long long count);
+void readL(long long *val, long long set);
+long long sumMatL(int rows, int cols, const long long* mat);
+long long sumMatLPtrPtr(int rows, int cols, const long long** mat);
 
-extern int sumArrI(const int *arr, int count);
-extern void readI(int *val, int set);
-extern int sumMatI(int rows, int cols, int mat[rows][cols]);
-extern int sumMatIPtrPtr(int rows, int cols, const int** mat);
+int sumArrI(const int *arr, int count);
+void readI(int *val, int set);
+int sumMatI(int rows, int cols, const int* mat);
+int sumMatIPtrPtr(int rows, int cols, const int** mat);
 
-extern short sumArrS(const short *arr, short count);
-extern void readS(short *val, short set);
-extern int sumMatS(int rows, int cols, short mat[rows][cols]);
-extern int sumMatSPtrPtr(int rows, int cols, const short ** mat);
+short sumArrS(const short *arr, short count);
+void readS(short *val, short set);
+int sumMatS(int rows, int cols, const short* mat);
+int sumMatSPtrPtr(int rows, int cols, const short ** mat);
 
-extern char sumArrB(const char *arr, char count);
-extern void readB(char *val, char set);
-extern int sumMatB(int rows, int cols, char mat[rows][cols]);
-extern int sumMatBPtrPtr(int rows, int cols, const char ** mat);
+char sumArrB(const char *arr, char count);
+void readB(char *val, char set);
+int sumMatB(int rows, int cols, const char* mat);
+int sumMatBPtrPtr(int rows, int cols, const char ** mat);
 
-extern int cstringLength(const char* string);
-extern char* mallocString(const char* origString);
-extern double* mallocDoubles(int count);
-extern void freeMemory(void *memory);
+int cstringLength(const char* string);
+char* mallocString(const char* origString);
+double* mallocDoubles(int count);
+void freeMemory(void *memory);
+}
 
 struct PassingData
 {

@@ -11,11 +11,16 @@
  */
 #include "library.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <mem.h>
-#include <stdbool.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
+static_assert(sizeof(char) == 1);
+static_assert(sizeof(short) == 2);
+static_assert(sizeof(int) == 4);
+static_assert(sizeof(long long) == 8);
+
+extern "C" {
 double sumD(const double d1, const double d2)
 {
     return (d1 + d2);
@@ -122,14 +127,12 @@ void readB(char *val, char set)
 }
 
 
-double sumMatD(int rows, int cols, double mat[rows][cols])
+double sumMatD(int rows, int cols, const double* mat)
 {
     int total = 0;
 
-    for (int yy = 0; yy < rows; ++yy)
-    {
-        for (int xx = 0; xx < cols; ++xx)
-            total += mat[yy][xx];
+    for (auto i = 0; i < rows * cols; i++) {
+        total += mat[i];
     }
 
     return total;
@@ -148,14 +151,12 @@ double sumMatDPtrPtr(const int rows, const int cols, const double** mat)
 }
 
 
-float sumMatF(int rows, int cols, float mat[rows][cols])
+float sumMatF(int rows, int cols, const float* mat)
 {
     float total = 0;
 
-    for (int yy = 0; yy < rows; ++yy)
-    {
-        for (int xx = 0; xx < cols; ++xx)
-            total += mat[yy][xx];
+    for (auto i = 0; i < rows * cols; i++) {
+        total += mat[i];
     }
 
     return total;
@@ -173,14 +174,12 @@ float sumMatFPtrPtr(const int rows, const int cols, const float** mat)
     return total;
 }
 
-long long sumMatL(int rows, int cols, long long mat[rows][cols])
+long long sumMatL(int rows, int cols, const long long* mat)
 {
     long long total = 0;
 
-    for (int yy = 0; yy < rows; ++yy)
-    {
-        for (int xx = 0; xx < cols; ++xx)
-            total += mat[yy][xx];
+    for (auto i = 0; i < rows * cols; i++) {
+        total += mat[i];
     }
 
     return total;
@@ -198,14 +197,12 @@ long long sumMatLPtrPtr(const int rows, const int cols, const long long** mat)
     return total;
 }
 
-int sumMatI(int rows, int cols, int mat[rows][cols])
+int sumMatI(int rows, int cols, const int* mat)
 {
     int total = 0;
 
-    for (int yy = 0; yy < rows; ++yy)
-    {
-        for (int xx = 0; xx < cols; ++xx)
-            total += mat[yy][xx];
+    for (auto i = 0; i < rows * cols; i++) {
+        total += mat[i];
     }
 
     return total;
@@ -223,14 +220,12 @@ int sumMatIPtrPtr(const int rows, const int cols, const int** mat)
     return total;
 }
 
-int sumMatS(int rows, int cols, short mat[rows][cols])
+int sumMatS(int rows, int cols, const short* mat)
 {
     int total = 0;
 
-    for (int yy = 0; yy < rows; ++yy)
-    {
-        for (int xx = 0; xx < cols; ++xx)
-            total += mat[yy][xx];
+    for (auto i = 0; i < rows * cols; i++) {
+        total += mat[i];
     }
 
     return total;
@@ -249,14 +244,12 @@ int sumMatSPtrPtr(const int rows, const int cols, const short ** mat)
 }
 
 
-int sumMatB(int rows, int cols, char mat[rows][cols])
+int sumMatB(int rows, int cols, const char* mat)
 {
     int total = 0;
 
-    for (int yy = 0; yy < rows; ++yy)
-    {
-        for (int xx = 0; xx < cols; ++xx)
-            total += mat[yy][xx];
+    for (auto i = 0; i < rows * cols; i++) {
+        total += mat[i];
     }
 
     return total;
@@ -281,24 +274,19 @@ int cstringLength(const char* string)
 
 char* mallocString(const char* origString)
 {
-    char* ret = malloc(strlen(origString) * sizeof(char));
+    char* ret = new char[strlen(origString)];
     strcpy(ret, origString);
     return ret;
 }
 
 double* mallocDoubles(const int count)
 {
-    double* ret = malloc(count *sizeof(double ));
+    double* ret = new double[count];
 
     for (int n = 0; n < count; ++n)
         ret[n] = (double)n;
 
     return ret;
-}
-
-void freeMemory(void *memory)
-{
-    free(memory);
 }
 
 double passStruct(struct PassingData* data)
@@ -325,4 +313,5 @@ double passComplex(struct ComplexPassing* complex)
     complex->s_passingData.s_int += 10;
     complex->s_ptrPassingData->s_int +=20;
     return ret;
+}
 }

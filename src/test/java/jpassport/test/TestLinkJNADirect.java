@@ -13,11 +13,7 @@ package jpassport.test;
 
 import com.sun.jna.Native;
 import jdk.incubator.foreign.MemoryAddress;
-import jdk.incubator.foreign.MemoryLayout;
-import jpassport.annotations.RefArg;
 import jpassport.test.performance.PerfTest;
-
-import java.io.File;
 
 public class TestLinkJNADirect
 {
@@ -44,7 +40,7 @@ public class TestLinkJNADirect
 
     static
     {
-        Native.register("libforeign_link");
+        Native.register("foreign_link");
     }
 
     public static class JNADirect implements TestLink, PerfTest {
