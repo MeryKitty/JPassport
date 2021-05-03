@@ -215,8 +215,7 @@ public class Utils
     }
 
     public static void toArr(byte[] arr, MemorySegment segment) {
-        for (int n = 0; n < arr.length; ++n)
-            arr[n] = MemoryAccess.getByteAtOffset(segment, n);
+
     }
 
 /*///////////////////////////////////////////////////////////////// */

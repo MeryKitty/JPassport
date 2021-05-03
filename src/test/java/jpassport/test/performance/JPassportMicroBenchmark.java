@@ -2,29 +2,19 @@ package jpassport.test.performance;
 
 import com.sun.jna.Native;
 import jpassport.PassportFactory;
-import jpassport.test.PureJava;
-import jpassport.test.TestLink;
-import jpassport.test.TestLinkJNADirect;
+import jpassport.test.validity.PureJava;
+import jpassport.test.validity.TestLink;
+import jpassport.test.validity.TestLinkJNADirect;
 import org.openjdk.jmh.annotations.*;
-import org.openjdk.jmh.runner.Runner;
-import org.openjdk.jmh.runner.options.Options;
-import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 @State(Scope.Benchmark)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class JPassportMicroBenchmark
 {
-    public static void main(String[] args) throws Exception {
-        Options opt = new OptionsBuilder()
-                .include(JPassportMicroBenchmark.class.getSimpleName())
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
-    }
-
     static TestLink testFL;
     static TestLink testJNA;
     static TestLink testJNADirect;
@@ -42,12 +32,11 @@ public class JPassportMicroBenchmark
 
     }
 
-
     @Setup()
     public void setUp() throws Throwable
     {
-        testFL = PassportFactory.link("libforeign_link", TestLink.class);
-        testJNA =  Native.load("libforeign_link.dll", TestLink.class);
+        testFL = PassportFactory.link("foreign_link", TestLink.class);
+        testJNA =  Native.load("foreign_link", TestLink.class);
         testJNADirect =  new TestLinkJNADirect.JNADirect();
         testJava = new PureJava();
     }

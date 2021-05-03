@@ -12,21 +12,13 @@
 package jpassport;
 
 import jdk.incubator.foreign.*;
-import jpassport.annotations.PtrPtrArg;
-import jpassport.annotations.RefArg;
+import jpassport.impl.ClassWriterLADV;
 
-import javax.tools.JavaCompiler;
-import javax.tools.ToolProvider;
-import java.lang.annotation.Annotation;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -59,7 +51,7 @@ public class PassportFactory
 
         List<Method> interfaceMethods = Arrays.stream(methods).filter(method -> (method.getModifiers() & Modifier.STATIC) == 0).toList();
         Set<Class> extraImports = findAllExtraImports(interfaceMethods);
-        ClassWriter classWriter = new ClassWriter(interfaceClass, extraImports);
+        ClassWriterLADV classWriter = new ClassWriterLADV(interfaceClass, extraImports);
         Map<String, MethodHandle> methodMap = new HashMap<>();
 
         for (Method method : interfaceMethods) {

@@ -1,24 +1,25 @@
-package jpassport;
+package jpassport.impl;
 
+import jpassport.Passport;
+import jpassport.Utils;
 import jpassport.annotations.Ptr;
 import jpassport.annotations.PtrPtrArg;
 import jpassport.annotations.RefArg;
 import jpassport.annotations.StructPadding;
 
-import javax.tools.JavaCompiler;
-import javax.tools.ToolProvider;
 import java.lang.annotation.Annotation;
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-public class ClassWriter <T extends Passport>
+import org.objectweb.asm.*;
+
+public class ClassWriterLADV<T extends Passport>
 {
+    private final Class<T> interfaceKlass;
     private final StringBuilder m_source = new StringBuilder();
     private final StringBuilder m_moduleSource = new StringBuilder();
     private final StringBuilder m_initSource = new StringBuilder();
@@ -40,11 +41,12 @@ public class ClassWriter <T extends Passport>
 
     private static int Class_ID = 1;
 
-    ClassWriter(Class<T> interfaceClass, Set<Class> extraImports)
+    public ClassWriterLADV(Class<T> interfaceClass, Set<Class> extraImports)
     {
+        this.interfaceKlass = interfaceClass;
         m_ID = Class_ID++;
-        m_className = interfaceClass.getSimpleName() + "_impl";
-        String packageName = "jpassport.called_" + m_ID;
+        m_className = interfaceClass.getSimpleName() + "_impl_" + m_ID;
+        String packageName = "jpassport.generated";
         m_fullClassName = packageName + "." + m_className;
         String structLayouts = buildStructLayouts(extraImports);
 
@@ -85,10 +87,9 @@ public class ClassWriter <T extends Passport>
                                 """);
 
         m_moduleSource.append(String.format("""
-                    module foreign.caller {
+                    module %s {
                         requires jdk.incubator.foreign;
                         requires jpassport;
-                        requires %s;
                     }
                     """, interfaceClass.getModule().getName()));
 
@@ -416,7 +417,7 @@ public class ClassWriter <T extends Passport>
         m_initSource.append(String.format("\t\tm_%s = m_methods.get(\"%s\");\n", method.getName(), method.getName()));
     }
 
-    T build(Map<String, MethodHandle> methods) throws Throwable
+    public T build(Map<String, MethodHandle> methods) throws Throwable
     {
         m_initSource.append("\t}");
         m_source.append(m_initSource);
@@ -432,14 +433,8 @@ public class ClassWriter <T extends Passport>
         Path moduleFile = buildRoot.resolve("module-info.java");
         Files.writeString(moduleFile, m_moduleSource);
 
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        compiler.run(null, null, null,
-                "--module-path", System.getProperty("jdk.module.path"),
-                moduleFile.toString(), sourceFile.toString());
-
-        URLClassLoader classLoader = URLClassLoader.newInstance(new URL[] {buildRoot.toUri().toURL()});
-        Class<T> foreignImpl = (Class<T>) Class.forName(m_fullClassName, true, classLoader);
-        return foreignImpl.getDeclaredConstructor(methods.getClass()).newInstance(methods);
+        System.err.println(System.getProperty("jdk.module.path").length());
+        return null; //(T)foreignImpl.getDeclaredConstructor(methods.getClass()).newInstance(methods);
     }
 
     private boolean isRefArg(Annotation[] paramAnnotations)

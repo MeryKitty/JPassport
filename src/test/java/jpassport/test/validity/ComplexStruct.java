@@ -1,4 +1,4 @@
-package jpassport.test;
+package jpassport.test.validity;
 
 import jpassport.annotations.Ptr;
 import jpassport.annotations.StructPadding;

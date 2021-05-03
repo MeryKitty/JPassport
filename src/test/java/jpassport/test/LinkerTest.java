@@ -20,6 +20,7 @@ import java.util.stream.IntStream;
 import jdk.incubator.foreign.*;
 import jpassport.Utils;
 import jpassport.PassportFactory;
+import jpassport.test.validity.*;
 import org.junit.Test;
 
 import static org.junit.Assert.*;

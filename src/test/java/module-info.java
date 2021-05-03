@@ -1,4 +1,4 @@
-module test.passport {
+module jpassport.test {
     requires jdk.incubator.foreign;
     requires jdk.unsupported;
 
@@ -11,4 +11,6 @@ module test.passport {
 
     exports jpassport.test;
     exports jpassport.test.performance;
+    exports jpassport.test.validity;
+    exports jpassport.test.util;
 }

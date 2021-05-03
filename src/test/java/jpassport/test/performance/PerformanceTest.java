@@ -13,9 +13,9 @@ package jpassport.test.performance;
 
 import com.sun.jna.Native;
 import jpassport.PassportFactory;
-import jpassport.test.ComplexStruct;
-import jpassport.test.TestLinkJNADirect;
-import jpassport.test.TestStruct;
+import jpassport.test.validity.ComplexStruct;
+import jpassport.test.validity.TestLinkJNADirect;
+import jpassport.test.validity.TestStruct;
 import jpassport.test.util.CSVOutput;
 
 import java.io.IOException;
@@ -29,7 +29,6 @@ public class PerformanceTest
     static PerfTest testJNA;
     static PerfTest testJNADirect;
     static PerfTest testJava;
-
 
     public static void startup() throws Throwable
     {

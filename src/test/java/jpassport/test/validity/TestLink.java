@@ -9,7 +9,7 @@
  *
  * A copy is also included in the downloadable source code.
  */
-package jpassport.test;
+package jpassport.test.validity;
 
 import com.sun.jna.Library;
 import jdk.incubator.foreign.MemoryAddress;

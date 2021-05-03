@@ -14,7 +14,7 @@ package jpassport.test.performance;
 import com.sun.jna.Library;
 import jpassport.Passport;
 import jpassport.annotations.RefArg;
-import jpassport.test.ComplexStruct;
+import jpassport.test.validity.ComplexStruct;
 
 public interface PerfTest extends Passport, Library {
     double sumD(double d, double d2);

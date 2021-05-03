@@ -11,8 +11,8 @@
  */
 package jpassport.test.performance;
 
-import jpassport.test.ComplexStruct;
-import jpassport.test.TestStruct;
+import jpassport.test.validity.ComplexStruct;
+import jpassport.test.validity.TestStruct;
 
 public class PureJavaPerf implements PerfTest{
     @Override
