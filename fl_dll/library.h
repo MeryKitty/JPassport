@@ -13,6 +13,7 @@
 #define FL_DLL_LIBRARY_H
 
 extern "C" {
+double simple(double d);
 double sumD(double d1, double d2);
 double sumArrD(const double *arr, int count);
 double sumArrDD(const double *arr, const double *arr2, int count);

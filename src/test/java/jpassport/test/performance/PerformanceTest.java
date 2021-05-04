@@ -19,6 +19,7 @@ import jpassport.test.validity.TestStruct;
 import jpassport.test.util.CSVOutput;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.stream.IntStream;
 
@@ -128,7 +129,7 @@ public class PerformanceTest
         long start = System.nanoTime();
         double m = 0;
         for (double n = 0; n < count; ++n) {
-            ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello")};
+            ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello".getBytes(StandardCharsets.US_ASCII))};
             m = testLib.passComplex(complex);
         }
         return (System.nanoTime() - start) / 1e9;

@@ -175,16 +175,6 @@ public class TestLinkJNADirect
         }
 
         @Override
-        public int cstringLength(String s) {
-            return 0;
-        }
-
-        @Override
-        public String mallocString(String orig) {
-            return new String(orig);
-        }
-
-        @Override
         public MemoryAddress mallocDoubles(int count) {
             return null;
         }

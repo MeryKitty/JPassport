@@ -13,6 +13,7 @@ package jpassport.test;
 
 import com.sun.jna.Native;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -40,8 +41,8 @@ public class LinkerTest
     static {
         try {
             System.setProperty("jpassport.build.home", "out/testing");
-
-            testFL = PassportFactory.link("foreign_link", TestLink.class);
+//            PassportFactory.link("foreign_link", SimpleLink.class);
+            testFL = PassportFactory.link("foreign_link", TestLink.class, TestLink.LOOKUP);
             testJNA = Native.load("foreign_link", TestLink.class);
             testJNADirect = new TestLinkJNADirect.JNADirect();
             testJava = new PureJava();
@@ -49,18 +50,8 @@ public class LinkerTest
             allLinks = List.of(testJava, testFL, testJNA, testJNADirect);
             allLinksPtrPtr = List.of(testJava, testFL);
         } catch (Throwable e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @Test
-    public void testAllocString()
-    {
-        for (TestLink test : allLinksPtrPtr)
-        {
-            String orig = "hello";
-            String ret = test.mallocString(orig);
-            assertEquals(orig, ret);
+            e.printStackTrace();
+            System.exit(1);
         }
     }
 
@@ -224,15 +215,6 @@ public class LinkerTest
     }
 
     @Test
-    public void testStrLen()
-    {
-        for (TestLink test : allLinksPtrPtr)
-        {
-            assertEquals(5, test.cstringLength("12345"));
-        }
-    }
-
-    @Test
     public void testReturnPointer()
     {
         double[] values = new double[5];
@@ -260,7 +242,7 @@ public class LinkerTest
     {
         TestStruct ts = new TestStruct(1, 2, 3, 4);
         TestStruct tsPtr = new TestStruct(5, 6, 7, 8);
-        ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello")};
+        ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello".getBytes(StandardCharsets.US_ASCII))};
 
         double d = testFL.passComplex(complex);
         assertEquals(IntStream.range(1, 9).sum(), d, EPSILON);

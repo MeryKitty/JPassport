@@ -1,7 +1,6 @@
 package jpassport.impl;
 
 import java.io.IOException;
-import java.lang.invoke.ConstantBootstraps;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -10,33 +9,34 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-
 import jdk.incubator.foreign.*;
+
+import org.objectweb.asm.*;
 import jpassport.Passport;
 import jpassport.annotations.ArrayValueArg;
 import jpassport.annotations.RefArg;
-import org.objectweb.asm.*;
 
 public class ClassGenerator {
     public static <T extends Passport> T build(Class<T> interfaceKlass, MethodHandles.Lookup lookup, String libraryName) throws IOException, IllegalAccessException {
         var klassName = interfaceKlass.getSimpleName() + "Impl";
         var klassFullName = Type.getInternalName(interfaceKlass) + "Impl";
-        if (!klassFullName.equals(interfaceKlass.getPackageName() + "." + klassName)) {
+        if (!klassFullName.equals((interfaceKlass.getPackageName() + "." + klassName).replace('.', '/'))) {
             throw new AssertionError(String.format("Class internal name %s, expected name %s",
                     klassFullName, interfaceKlass.getPackageName() + "." + klassName));
         }
         var cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         cw.visit(Opcodes.V16,
                 Opcodes.ACC_PUBLIC,
-                klassName,
+                klassFullName,
                 null,
-                "java/lang/Object",
-                new String[] {interfaceKlass.getCanonicalName()});
-        cw.visitModule(interfaceKlass.getModule().getName(), Opcodes.ACC_MANDATED, null);
+                Type.getInternalName(Object.class),
+                new String[] {Type.getInternalName(interfaceKlass)});
+        cw.visitModule(interfaceKlass.getModule().getName(), 0, null);
 
         var methods = Arrays.stream(interfaceKlass.getMethods())
                 .filter(method -> {
@@ -55,12 +55,35 @@ public class ClassGenerator {
             }
         }
 
+        // This part define the default constructor
+        {
+            var mw = cw.visitMethod(Opcodes.ACC_PUBLIC,
+                    "<init>",
+                    Type.getMethodDescriptor(Type.getType(void.class)),
+                    null,
+                    null);
+            // -> this
+            mw.visitVarInsn(Opcodes.ALOAD, 0);
+            // ->
+            mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
+                    Type.getInternalName(Object.class),
+                    "<init>",
+                    Type.getMethodDescriptor(Type.getType(void.class)),
+                    false);
+            mw.visitMaxs(0, 0);
+            mw.visitEnd();
+        }
+
         classInitializer(cw, klassFullName, methods, libraryName);
 
         for (var method : methods) {
             methodImplementation(cw, method, klassFullName);
         }
+        cw.visitEnd();
 
+        Files.write(Path.of("./out", klassName + ".class"), cw.toByteArray());
+
+        lookup = MethodHandles.privateLookupIn(interfaceKlass, lookup);
         var createdKlass = lookup.defineHiddenClass(cw.toByteArray(), true).lookupClass();
         try {
             return (T) createdKlass.getDeclaredConstructor().newInstance();
@@ -114,9 +137,7 @@ public class ClassGenerator {
                 "ofLibrary",
                 Type.getMethodDescriptor(Type.getType(LibraryLookup.class), Type.getType(String.class)),
                 true);
-        // ->
-        mw.visitVarInsn(Opcodes.ASTORE, 0);
-        // -> clinker
+        // -> libLookup -> clinker
         mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                 Type.getInternalName(CLinker.class),
                 "getInstance",
@@ -124,62 +145,65 @@ public class ClassGenerator {
                 true);
 
         for (var method : methods) {
-            // -> clinker -> clinker
-            mw.visitInsn(Opcodes.DUP);
-            // -> clinker -> clinker -> libLookup
-            mw.visitVarInsn(Opcodes.ALOAD, 0);
-            // -> clinker -> clinker -> symbolOptional
+            // -> libLookup -> clinker
+            // -> libLookup -> clinker -> libLookup -> clinker
+            mw.visitInsn(Opcodes.DUP2);
+            // -> libLookup -> clinker -> clinker -> libLookup
+            mw.visitInsn(Opcodes.SWAP);
+            // -> libLookup -> clinker -> clinker -> libLookup -> methodName
+            mw.visitLdcInsn(method.getName());
+            // -> libLookup -> clinker -> clinker -> symbolOptional
             mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
                     Type.getInternalName(LibraryLookup.class),
                     "lookup",
                     Type.getMethodDescriptor(Type.getType(Optional.class), Type.getType(String.class)),
                     true);
-            // -> clinker -> clinker -> symbol (uncasted)
+            // -> libLookup -> clinker -> clinker -> symbol (uncasted)
             mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                     Type.getInternalName(Optional.class),
                     "get",
                     Type.getMethodDescriptor(Type.getType(Object.class)),
                     false);
-            // -> clinker -> clinker -> symbol
+            // -> libLookup -> clinker -> clinker -> symbol
             mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LibraryLookup.Symbol.class));
             var modRetType = InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class));
             var modArgTypeList = Arrays.stream(method.getParameters())
                     .map(param -> InternalUtils.wrapPrimitive(param.getType(), param.isAnnotationPresent(RefArg.class))).toList();
-            // -> clinker -> clinker -> symbol -> retType
-            mw.visitLdcInsn(modRetType);
+            // -> libLookup -> clinker -> clinker -> symbol -> retType
+            mw.visitLdcInsn(Type.getType(modRetType));
             if (modArgTypeList.size() == 0) {
-                // -> clinker -> clinker -> symbol -> methodType
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                         Type.getInternalName(MethodType.class),
                         "methodType",
                         Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class)),
                         false);
             } else if (modArgTypeList.size() == 1) {
-                // -> clinker -> clinker -> symbol -> retType -> argType_0
-                mw.visitLdcInsn(modArgTypeList.get(0));
-                // -> clinker -> clinker -> symbol -> methodType
+                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argType_0
+                mw.visitLdcInsn(Type.getType(modArgTypeList.get(0)));
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                         Type.getInternalName(MethodType.class),
                         "methodType",
                         Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class), Type.getType(Class.class)),
                         false);
             } else {
-                // -> clinker -> clinker -> symbol -> retType -> argListSize
+                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argListSize
                 mw.visitLdcInsn(modArgTypeList.size());
-                // -> clinker -> clinker -> symbol -> retType -> argList
+                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList
                 mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(Class.class));
                 for (int i = 0; i < modArgTypeList.size(); i++) {
-                    // -> clinker -> clinker -> symbol -> retType -> argList -> argList
+                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList -> argList
                     mw.visitInsn(Opcodes.DUP);
-                    // -> clinker -> clinker -> symbol -> retType -> argList -> argList -> i
+                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList -> argList -> i
                     mw.visitLdcInsn(i);
-                    // -> clinker -> clinker -> symbol -> retType -> argList -> argList -> i -> argType_i
-                    mw.visitLdcInsn(modArgTypeList.get(i));
-                    // -> clinker -> clinker -> symbol -> retType -> argList
+                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList -> argList -> i -> argType_i
+                    mw.visitLdcInsn(Type.getType(modArgTypeList.get(i)));
+                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
-                // -> clinker -> clinker -> symbol -> retType -> argList
-                // -> clinker -> clinker -> symbol -> methodType
+                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                         Type.getInternalName(MethodType.class),
                         "methodType",
@@ -187,84 +211,83 @@ public class ClassGenerator {
                         false);
             }
 
-            // -> clinker -> clinker -> symbol -> methodType
+            // -> libLookup -> clinker -> clinker -> symbol -> methodType
             if (modRetType == void.class) {
-                // -> clinker -> clinker -> symbol -> methodType -> argDesSize
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesSize
                 mw.visitLdcInsn(modArgTypeList.size());
-                // -> clinker -> clinker -> symbol -> methodType -> argDesList
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
                 mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
                 for (int i = 0; i < modArgTypeList.size(); i++) {
-                    // -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList
                     mw.visitInsn(Opcodes.DUP);
-                    // -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i
                     mw.visitLdcInsn(i);
                     var param = method.getParameters()[i];
-                    // -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i -> argDesList[i]
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i -> argDesList[i]
                     getTypeDesc(mw, param.getType(), Optional.ofNullable(param.getAnnotation(RefArg.class)), Optional.ofNullable(param.getAnnotation(ArrayValueArg.class)));
-                    // -> clinker -> clinker -> symbol -> methodType -> argDesList
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
-                // -> clinker -> clinker -> symbol -> methodType -> argDesList
-                // -> clinker -> clinker -> symbol -> methodType -> funcDes
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> funcDes
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                         Type.getInternalName(FunctionDescriptor.class),
                         "ofVoid",
                         Type.getMethodDescriptor(Type.getType(FunctionDescriptor.class), Type.getType(MemoryLayout.class.arrayType())),
                         false);
             } else {
-                // -> clinker -> clinker -> symbol -> methodType -> retDes
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes
                 getTypeDesc(mw, method.getReturnType(), Optional.ofNullable(method.getAnnotation(RefArg.class)), Optional.ofNullable(method.getAnnotation(ArrayValueArg.class)));
-                // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesSize
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesSize
                 mw.visitLdcInsn(modArgTypeList.size());
-                // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
                 mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
                 for (int i = 0; i < modArgTypeList.size(); i++) {
-                    // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList
                     mw.visitInsn(Opcodes.DUP);
-                    // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i
                     mw.visitLdcInsn(i);
                     var param = method.getParameters()[i];
-                    // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i -> argDesList[i]
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i -> argDesList[i]
                     getTypeDesc(mw, param.getType(), Optional.ofNullable(param.getAnnotation(RefArg.class)), Optional.ofNullable(param.getAnnotation(ArrayValueArg.class)));
-                    // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
+                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
-                // -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
-                // -> clinker -> clinker -> symbol -> methodType -> funcDes
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
+                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> funcDes
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                         Type.getInternalName(FunctionDescriptor.class),
                         "of",
                         Type.getMethodDescriptor(Type.getType(FunctionDescriptor.class), Type.getType(MemoryLayout.class), Type.getType(MemoryLayout.class.arrayType())),
                         false);
             }
-            // -> clinker -> clinker -> symbol -> methodType -> funcDes
-            // -> clinker -> methodHandle
+
+            // -> libLookup -> clinker -> clinker -> symbol -> methodType -> funcDes
+            // -> libLookup -> clinker -> methodHandle
             mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
                     Type.getInternalName(CLinker.class),
                     "downcallHandle",
                     Type.getMethodDescriptor(Type.getType(MethodHandle.class), Type.getType(Addressable.class), Type.getType(MethodType.class), Type.getType(FunctionDescriptor.class)),
                     true);
-            // -> clinker
+            // -> libLookup -> clinker
             mw.visitFieldInsn(Opcodes.PUTSTATIC,
                     klassFullName,
                     method.getName(),
                     Type.getDescriptor(MethodHandle.class));
         }
 
-        // -> clinker
+        // -> libLookup -> clinker
         // ->
-        mw.visitInsn(Opcodes.POP);
+        mw.visitInsn(Opcodes.POP2);
         mw.visitJumpInsn(Opcodes.GOTO, finish);
-        // -> causeExcep
         mw.visitLabel(catchBlock);
-        // ->
-        mw.visitVarInsn(Opcodes.ASTORE, 0);
-        // -> runExcep
+        // -> causeExcep
+        // -> causeExcep -> runExcep
         mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(RuntimeException.class));
-        // -> runExcep -> runExcep
-        mw.visitInsn(Opcodes.DUP);
+        // -> runExcep -> causeExcep -> runExcep
+        mw.visitInsn(Opcodes.DUP_X1);
         // -> runExcep -> runExcep -> causeExcep
-        mw.visitVarInsn(Opcodes.ALOAD, 0);
+        mw.visitInsn(Opcodes.SWAP);
         // -> runExcep
         mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
                 Type.getInternalName(RuntimeException.class),
@@ -275,16 +298,6 @@ public class ClassGenerator {
         mw.visitInsn(Opcodes.ATHROW);
         mw.visitLabel(finish);
         mw.visitInsn(Opcodes.RETURN);
-        mw.visitLocalVariable("lib",
-                Type.getDescriptor(LibraryLookup.class),
-                null,
-                tryBlock, catchBlock,
-                0);
-        mw.visitLocalVariable("e",
-                Type.getDescriptor(Exception.class),
-                null,
-                catchBlock, finish,
-                0);
         mw.visitMaxs(0, 0);
         mw.visitEnd();
     }
@@ -296,25 +309,27 @@ public class ClassGenerator {
                 Type.getMethodDescriptor(method),
                 null,
                 null);
-        for (var param : method.getParameters()) {
-            mw.visitParameter(param.getName(), Opcodes.ACC_MANDATED);
-        }
+
+        var methodStart = new Label();
         var tryBlock = new Label();
         var catchBlock = new Label();
-        var finallyBlock = new Label();
+        var methodEnd = new Label();
         int scopeLocalVarIndex;
-        int paramStackSize = 1; // The first slot is "this"
+        int firstLocalSlot = 1; // The first slot is "this"
         for (var paramType : method.getParameterTypes()) {
             if (paramType == long.class || paramType == double.class) {
-                paramStackSize += 2;
+                firstLocalSlot += 2;
             } else {
-                paramStackSize += 1;
+                firstLocalSlot += 1;
             }
         }
-        scopeLocalVarIndex = paramStackSize;
+        // ->
+        mw.visitLabel(methodStart);
         boolean needScope = method.getReturnType().isArray() || method.getReturnType().isRecord() || method.getAnnotation(RefArg.class) != null;
         needScope = needScope || Arrays.stream(method.getParameters()).anyMatch(c -> c.getType().isRecord() || c.getType().isArray() || c.getAnnotation(RefArg.class) != null);
         if (needScope) {
+            scopeLocalVarIndex = firstLocalSlot;
+            firstLocalSlot += 1;
             // -> scope
             mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                     Type.getInternalName(NativeScope.class),
@@ -324,9 +339,12 @@ public class ClassGenerator {
             // ->
             mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex);
         } else {
-            scopeLocalVarIndex--;
+            scopeLocalVarIndex = -1;
         }
+
+        mw.visitTryCatchBlock(tryBlock, catchBlock, catchBlock, Type.getInternalName(Throwable.class));
         // ->
+        mw.visitLabel(tryBlock);
         // -> handle
         mw.visitFieldInsn(Opcodes.GETSTATIC,
                 klassFullName,
@@ -364,7 +382,7 @@ public class ClassGenerator {
             }
             // -> ... -> arg_i
             // -> ... -> modArg_i
-            resolveArgument(mw, param, scopeLocalVarIndex + 1, scopeLocalVarIndex);
+            resolveArgument(mw, param, firstLocalSlot, scopeLocalVarIndex);
         }
         // -> handle -> arg0 -> arg1 -> ...
         var retTypeWrapper = Type.getType(InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class)));
@@ -378,6 +396,9 @@ public class ClassGenerator {
                 Type.getMethodDescriptor(retTypeWrapper, paramTypeWrapperList),
                 false);
         var retType = method.getReturnType();
+        if (!retType.isPrimitive()) {
+            resolveResult(mw, retType, firstLocalSlot, scopeLocalVarIndex);
+        }
         // -> (ret)
         if (retType == void.class) {
             // ->
@@ -402,6 +423,46 @@ public class ClassGenerator {
             // -> ret
             // ->
             mw.visitInsn(Opcodes.ARETURN);
+        }
+
+        // -> throwable
+        mw.visitLabel(catchBlock);
+        if (needScope) {
+            // -> throwable
+            // -> throwable -> scope
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+            // -> throwable
+            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                    Type.getInternalName(NativeScope.class),
+                    "close",
+                    Type.getMethodDescriptor(Type.getType(void.class)),
+                    true);
+        }
+        // -> throwable
+        // -> throwable -> runExcep
+        mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(RuntimeException.class));
+        // -> runExcep -> throwable -> runExcep
+        mw.visitInsn(Opcodes.DUP_X1);
+        // -> runExcep -> runExcep -> throwable
+        mw.visitInsn(Opcodes.SWAP);
+        // -> runExcep
+        mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
+                Type.getInternalName(RuntimeException.class),
+                "<init>",
+                Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
+                false);
+        // ->
+        mw.visitInsn(Opcodes.ATHROW);
+
+        // ->
+        mw.visitLabel(methodEnd);
+
+        if (needScope) {
+            mw.visitLocalVariable("scope",
+                    Type.getDescriptor(NativeScope.class),
+                    null,
+                    methodStart, methodEnd,
+                    scopeLocalVarIndex);
         }
         mw.visitMaxs(0, 0);
         mw.visitEnd();
@@ -439,7 +500,7 @@ public class ClassGenerator {
                 mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
                 if (argType.isArray()) {
                     // -> ... -> arg -> scope
-                    long length = Optional.ofNullable(arg.getAnnotation(ArrayValueArg.class)).map(ArrayValueArg::length).orElseThrow(() -> new RuntimeException("Missing ArrayValuerecord annotation"));
+                    long length = Optional.ofNullable(arg.getAnnotation(ArrayValueArg.class)).map(ArrayValueArg::length).orElseThrow();
                     // -> ... -> arg -> scope -> length
                     mw.visitLdcInsn(length);
                     // -> ... -> arg -> argSeg
@@ -464,256 +525,279 @@ public class ClassGenerator {
 
     }
 
+    /**
+     * Deconstruct a local variable into appropriate MemorySegments, the operation is done recursively
+     *
+     * <pre>
+     * Operand stack
+     * Before:
+     * -> ... -> memSeg -> arg if offset is known at compile time
+     * -> ... -> memSeg -> offset -> arg if offset must be resolved at runtime
+     * After:
+     * -> ...
+     * </pre>
+     *
+     * @param mw
+     * @param varType
+     * @param currentOffset
+     * @param currentLocalVarIndex
+     * @param scopeLocalVarIndex
+     */
     private static void deconstructVariable(MethodVisitor mw, Class<?> varType, Optional<Long> currentOffset, int currentLocalVarIndex, final int scopeLocalVarIndex) {
         // -> ... -> memSeg -> loffset -> arg with nonconstant offset
-        // -> ... -> memSeg -> arg -> with constant offset
-        currentOffset.ifPresent(l -> {
-            // -> ... -> memSeg -> arg
-            if (!varType.isRecord()) {
-                // -> ... -> memSeg -> arg -> loffset
-                mw.visitLdcInsn(l);
-                if (varType == long.class || varType == double.class) {
-                    // -> ... -> memSeg -> loffset -> arg
-                    mw.visitInsn(Opcodes.DUP2_X2);
-                } else {
-                    // -> ... -> memSeg -> loffset -> arg
-                    mw.visitInsn(Opcodes.DUP2_X1);
-                }
-            }
-        });
-        // -> ... -> memSeg -> loffset -> arg (except with constant offset and record)
-        if (varType == boolean.class) {
-            // -> ... -> memSeg -> loffset -> (byte)arg
-            mw.visitInsn(Opcodes.I2B);
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setIntAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(int.class)),
-                    false);
-        } else if (varType == byte.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setByteAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(byte.class)),
-                    false);
-        } else if (varType == short.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setShortAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(short.class)),
-                    false);
-        } else if (varType == char.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setCharAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(char.class)),
-                    false);
-        } else if (varType == int.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setIntAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(int.class)),
-                    false);
-        } else if (varType == long.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setLongAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(long.class)),
-                    false);
-        } else if (varType == float.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setFloatAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(float.class)),
-                    false);
-        } else if (varType == double.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setDoubleAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(double.class)),
-                    false);
-        } else if (varType == MemoryAddress.class) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setAddressAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(MemoryAddress.class)),
-                    false);
-        } else if (varType.isArray()) {
-            // -> ... -> memSeg -> loffset -> arg
-            // -> ...
-            deconstructArray(mw, varType, currentLocalVarIndex, scopeLocalVarIndex);
-        } else {
+        // -> ... -> memSeg -> arg with constant offset
+        if (varType.isRecord()) {
             // -> ... -> memSeg -> loffset -> arg with nonconstant offset
             // -> ... -> memSeg -> arg -> with constant offset
             deconstructRecord(mw, varType, currentOffset, currentLocalVarIndex, scopeLocalVarIndex);
+        } else {
+            currentOffset.ifPresent(l -> {
+                // -> ... -> memSeg -> arg
+                // -> ... -> memSeg -> arg -> loffset
+                mw.visitLdcInsn(l);
+                if (varType == long.class || varType == double.class) {
+                    // -> ... -> memSeg -> arg -> loffset
+                    // -> ... -> memSeg -> loffset -> arg -> loffset
+                    mw.visitInsn(Opcodes.DUP2_X2);
+                } else {
+                    // -> ... -> memSeg -> arg -> loffset
+                    // -> ... -> memSeg -> loffset -> arg -> loffset
+                    mw.visitInsn(Opcodes.DUP2_X1);
+                }
+                // -> ... -> memSeg -> loffset -> arg -> loffset
+                // -> ... -> memSeg -> loffset -> arg
+                mw.visitInsn(Opcodes.POP2);
+            });
+            // -> ... -> memSeg -> loffset -> arg
+            if (varType == byte.class || varType == boolean.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setByteAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(byte.class)),
+                        false);
+            } else if (varType == short.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setShortAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(short.class)),
+                        false);
+            } else if (varType == char.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setCharAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(char.class)),
+                        false);
+            } else if (varType == int.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setIntAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(int.class)),
+                        false);
+            } else if (varType == long.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setLongAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(long.class)),
+                        false);
+            } else if (varType == float.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setFloatAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(float.class)),
+                        false);
+            } else if (varType == double.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setDoubleAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(double.class)),
+                        false);
+            } else if (varType == MemoryAddress.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setAddressAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
+                        false);
+            } else if (varType.isArray()) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                deconstructArray(mw, varType, currentLocalVarIndex, scopeLocalVarIndex);
+            } else {
+                throw new AssertionError();
+            }
+            // -> ...
         }
+        // -> ...
     }
 
     private static void deconstructArray(MethodVisitor mw, Class<?> varType, int currentLocalVarIndex, final int scopeLocalVarIndex) {
-        // -> ... -> memSeg -> loffset -> arg
+        // -> ... -> memSeg -> lbaseOffset -> array
         var methodStart = new Label();
         var forStart = new Label();
         var forEnd = new Label();
         var componentType = varType.componentType();
+        // -> ... -> memSeg -> lbaseOffset -> array
         mw.visitLabel(methodStart);
-        // -> ... .> memSeg -> loffset
-        mw.visitVarInsn(Opcodes.ASTORE, currentLocalVarIndex + 3);
-        // -> ... -> memSeg
-        mw.visitVarInsn(Opcodes.LSTORE, currentLocalVarIndex + 1);
-        // -> ...
+        // -> ... -> memSeg -> lbaseOffset
+        mw.visitVarInsn(Opcodes.ASTORE, currentLocalVarIndex + 1);
+        // -> ... -> lbaseOffset -> memSeg -> lbaseOffset
+        mw.visitInsn(Opcodes.DUP2_X1);
+        // -> ... -> lbaseOffset -> memSeg
+        mw.visitInsn(Opcodes.POP2);
+        // -> ... -> lbaseOffset
         mw.visitVarInsn(Opcodes.ASTORE, currentLocalVarIndex);
-        // -> ... -> arg
-        mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 3);
-        // -> ... -> arg.len
+        // -> ... -> lbaseOffset -> array
+        mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 1);
+        // -> ... -> lbaseOffset -> array.len
         mw.visitInsn(Opcodes.ARRAYLENGTH);
-        // -> ... -> arg.len -> 0
+        // -> ... -> lbaseOffset -> array.len -> 0
         mw.visitInsn(Opcodes.ICONST_0);
-        mw.visitLabel(forStart);
-        // -> ... -> arg.len -> index -> arg.len -> index
-        mw.visitInsn(Opcodes.DUP2);
-        // -> ... -> arg.len -> index -> arg.len - index
-        mw.visitInsn(Opcodes.ISUB);
-        // -> ... -> arg.len -> index
-        mw.visitJumpInsn(Opcodes.IFLE, forEnd);
-        // -> ... -> arg.len -> index -> index
-        mw.visitInsn(Opcodes.DUP);
-        // -> ... -> arg.len -> index
-        mw.visitVarInsn(Opcodes.ISTORE, currentLocalVarIndex + 4);
-        if (!componentType.isArray()) {
-            // -> ... -> arg.len -> index
-            var sizeData = componentType.isRecord() ? InternalUtils.recordLayoutSize(componentType) : InternalUtils.primitiveLayoutSize(componentType);
-            long elementSize = InternalUtils.align(sizeData.size(), sizeData.alignment());
-            // -> ... -> arg.len -> index -> index
-            mw.visitInsn(Opcodes.DUP);
-            // -> ... -> arg.len -> index -> lindex
-            mw.visitInsn(Opcodes.I2L);
-            // -> ... -> arg.len -> index -> lindex -> elementSize
-            mw.visitLdcInsn(elementSize);
-            // -> ... -> arg.len -> index -> larrayOffset
-            mw.visitInsn(Opcodes.LMUL);
-            // -> ... -> arg.len -> index -> larrayOffset -> lbaseOffset
-            mw.visitVarInsn(Opcodes.LLOAD, currentLocalVarIndex + 1);
-            // -> ... -> arg.len -> index -> loffset
-            mw.visitInsn(Opcodes.LADD);
-            // -> ... -> arg.len -> index -> loffset -> memSeg
-            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex);
-            // -> ... -> arg.len -> index -> memSeg -> loffset -> memSeg
-            mw.visitInsn(Opcodes.DUP_X2);
-            // -> ... -> arg.len -> index -> memSeg -> loffset
-            mw.visitInsn(Opcodes.POP);
-            // -> ... -> arg.len -> index -> memSeg -> loffset -> arg
-            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 3);
-            // -> ... -> arg.len -> index -> memSeg -> loffset -> arg -> index
-            mw.visitVarInsn(Opcodes.ILOAD, currentLocalVarIndex + 4);
-            if (componentType == byte.class) {
-                mw.visitInsn(Opcodes.BALOAD);
-            } else if (componentType == short.class) {
-                mw.visitInsn(Opcodes.SALOAD);
-            } else if (componentType == char.class) {
-                mw.visitInsn(Opcodes.CALOAD);
-            } else if (componentType == int.class) {
-                mw.visitInsn(Opcodes.IALOAD);
-            } else if (componentType == long.class) {
-                mw.visitInsn(Opcodes.LALOAD);
-            } else if (componentType == float.class) {
-                mw.visitInsn(Opcodes.FALOAD);
-            } else if (componentType == double.class) {
-                mw.visitInsn(Opcodes.AALOAD);
-            }
-            // -> ... -> arg.len -> index -> memSeg -> loffset -> arg[index]
-            // -> ... -> arg.len -> index
-            deconstructVariable(mw, componentType, Optional.empty(), currentLocalVarIndex + 5, scopeLocalVarIndex);
-            // -> ... -> arg.len
-            mw.visitInsn(Opcodes.POP);
-        } else {
-            // -> ... -> arg.len -> index
-            // -> ... -> arg.len -> index -> arg
-            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 3);
-            // -> ... -> arg.len -> arg -> index
-            mw.visitInsn(Opcodes.SWAP);
-            // -> ... -> arg.len -> arg[index]
-            mw.visitInsn(Opcodes.AALOAD);
-            // -> ... -> arg.len -> arg[index] -> arg[index]
-            mw.visitInsn(Opcodes.DUP);
-            // -> ... -> arg.len -> arg[index] -> arg[index] -> scope
-            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-            // -> ... -> arg.len -> arg[index] -> scope -> arg[index]
-            mw.visitInsn(Opcodes.SWAP);
-            // -> ... -> arg.len -> arg[index] -> scope -> arg[index].len
-            mw.visitInsn(Opcodes.ARRAYLENGTH);
-            // -> ... -> arg.len -> arg[index] -> elementSeg
-            allocateArray(mw, componentType);
-            // -> ... -> arg.len -> elementSegAddr
-            initializeAllocatedObject(mw, componentType, currentLocalVarIndex + 5, scopeLocalVarIndex);
-            // -> ... -> arg.len -> elementSegAddr -> memSeg
-            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex);
-            // -> ... -> arg.len -> memSeg -> elementSegAddr
-            mw.visitInsn(Opcodes.SWAP);
-            // -> ... -> arg.len -> memSeg -> elementSegAddr -> index
-            mw.visitVarInsn(Opcodes.ILOAD, currentLocalVarIndex + 4);
-            // -> ... -> arg.len -> memSeg -> elementSegAddr -> lindex
-            mw.visitInsn(Opcodes.I2L);
-            // -> ... -> arg.len -> memSeg -> elementSegAddr -> lindex -> pointerSize
-            mw.visitLdcInsn(CLinker.C_POINTER.byteSize());
-            // -> ... -> arg.len -> memSeg -> elementSegAddr -> loffset
-            mw.visitInsn(Opcodes.LMUL);
-            // -> ... -> arg.len -> memSeg -> loffset -> elementSegAddr -> loffset
+        {
+            // -> ... -> loffset -> array.len -> index
+            mw.visitLabel(forStart);
+            // -> ... -> array.len -> index -> loffset -> array.len -> index
+            mw.visitInsn(Opcodes.DUP2_X2);
+            // -> ... -> array.len -> index -> loffset -> array.len - index
+            mw.visitInsn(Opcodes.ISUB);
+
+            // Break point
+            // -> ... -> array.len -> index -> loffset -> array.len - index
+            // -> ... -> array.len -> index -> loffset
+            mw.visitJumpInsn(Opcodes.IFLE, forEnd);
+
+            // -> ... -> array.len -> index -> loffset
+            // -> ... -> loffset -> array.len -> index -> loffset
+            mw.visitInsn(Opcodes.DUP2_X2);
+            // -> ... -> loffset -> array.len -> loffset -> index -> loffset
             mw.visitInsn(Opcodes.DUP2_X1);
-            // -> ... -> arg.len -> memSeg -> loffset -> elementSegAddr
+            // -> ... -> loffset -> array.len -> loffset -> index
             mw.visitInsn(Opcodes.POP2);
-            // -> ... -> arg.len
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(MemoryAccess.class),
-                    "setAddressAtOffset",
-                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(MemoryAddress.class)),
-                    false);
+            // -> ... -> loffset -> array.len -> loffset -> index -> memSeg
+            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex);
+            // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> index -> memSeg
+            mw.visitInsn(Opcodes.DUP2_X2);
+            // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> index
+            mw.visitInsn(Opcodes.POP);
+            // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> index -> array
+            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 1);
+            // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
+            mw.visitInsn(Opcodes.SWAP);
+            if (componentType.isArray()) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.AALOAD);
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index]
+                mw.visitInsn(Opcodes.DUP);
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index].len
+                mw.visitInsn(Opcodes.ARRAYLENGTH);
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index].len -> scope
+                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> scope -> array[index].len
+                mw.visitInsn(Opcodes.SWAP);
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index]Seg
+                allocateArray(mw, componentType);
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]SegAddr
+                initializeAllocatedObject(mw, componentType, currentLocalVarIndex + 2, scopeLocalVarIndex);
+                // -> ... -> loffset -> array.len -> index
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setAddressAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
+                        false);
+            } else {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
+                if (componentType == boolean.class || componentType == byte.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.BALOAD);
+                } else if (componentType == short.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.SALOAD);
+                } else if (componentType == char.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.CALOAD);
+                } else if (componentType == int.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.IALOAD);
+                } else if (componentType == long.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.LALOAD);
+                } else if (componentType == float.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.FALOAD);
+                } else if (componentType == double.class) {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.DALOAD);
+                } else {
+                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                    mw.visitInsn(Opcodes.AALOAD);
+                }
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                // -> ... -> loffset -> array.len -> index
+                deconstructVariable(mw, componentType, Optional.empty(), currentLocalVarIndex + 2, scopeLocalVarIndex);
+            }
+            // -> ... -> loffset -> array.len -> index
+            // -> ... -> loffset -> array.len -> index -> 1
+            mw.visitInsn(Opcodes.ICONST_1);
+            // -> ... -> loffset -> array.len -> index + 1
+            mw.visitInsn(Opcodes.IADD);
+            // -> ... -> array.len -> index + 1 -> loffset -> array.len -> index + 1
+            mw.visitInsn(Opcodes.DUP2_X2);
+            // -> ... -> array.len -> index + 1 -> loffset
+            mw.visitInsn(Opcodes.POP2);
+            long elementSize;
+            if (componentType.isArray()) {
+                elementSize = CLinker.C_POINTER.byteSize();
+            } else if (componentType.isRecord()) {
+                var elementRawSizeAlign = InternalUtils.recordLayoutSize(componentType);
+                elementSize = InternalUtils.align(elementRawSizeAlign.size(), elementRawSizeAlign.alignment());
+            } else {
+                elementSize = InternalUtils.primitiveLayoutSize(componentType).size();
+            }
+            // -> ... -> array.len -> index + 1 -> loffset
+            // -> ... -> array.len -> index + 1 -> loffset -> lcomponentSize
+            mw.visitLdcInsn(elementSize);
+            // -> ... -> array.len -> index + 1 -> loffset + lcomponentSize
+            mw.visitInsn(Opcodes.LADD);
+            // -> ... -> loffset + lcomponentSize -> array.len -> index + 1 -> loffset + lcomponentSize
+            mw.visitInsn(Opcodes.DUP2_X2);
+            // -> ... -> loffset + lcomponentSize -> array.len -> index + 1
+            mw.visitInsn(Opcodes.POP2);
+            // -> ... -> loffset + lcomponentSize -> array.len -> index + 1
+            mw.visitJumpInsn(Opcodes.GOTO, forStart);
         }
-        // -> ... -> arg.len
-        mw.visitIincInsn(currentLocalVarIndex + 4, 1);
-        // -> ... -> arg.len -> index + 1
-        mw.visitVarInsn(Opcodes.ILOAD, currentLocalVarIndex + 4);
-        // -> ... -> arg.len -> index + 1
-        mw.visitJumpInsn(Opcodes.GOTO, forStart);
+        // -> ... -> array.len -> index -> loffset
         mw.visitLabel(forEnd);
+        // -> ... -> array.len -> index
+        mw.visitInsn(Opcodes.POP2);
         // -> ...
-        mw.visitInsn(Opcodes.DUP2);
-        mw.visitLocalVariable("memSeg",
+        mw.visitInsn(Opcodes.POP2);
+
+        mw.visitLocalVariable("segment",
                 Type.getDescriptor(MemorySegment.class),
                 null,
                 methodStart, forEnd,
                 currentLocalVarIndex);
-        mw.visitLocalVariable("baseOffset",
-                Type.getDescriptor(long.class),
-                null,
-                methodStart, forEnd,
-                currentLocalVarIndex + 1);
-        mw.visitLocalVariable("arg",
+        mw.visitLocalVariable("array",
                 Type.getDescriptor(varType),
                 null,
                 methodStart, forEnd,
-                currentLocalVarIndex + 3);
-        mw.visitLocalVariable("i",
-                Type.getDescriptor(int.class),
-                null,
-                methodStart, forEnd,
-                currentLocalVarIndex + 4);
+                currentLocalVarIndex + 1);
+
         // -> ...
     }
 
@@ -722,6 +806,9 @@ public class ClassGenerator {
         // -> ... -> memSeg -> record                  with constant offset
         var methodStart = new Label();
         var methodEnd = new Label();
+        // -> ... -> memSeg -> loffset -> record       with nonconstant offset
+        // -> ... -> memSeg -> record                  with constant offset
+        mw.visitLabel(methodStart);
         // -> ... -> memSeg -> loffset              with nonconstant offset
         // -> ... -> memSeg                         with constant offset
         mw.visitVarInsn(Opcodes.ASTORE, currentLocalVarIndex + 1);
@@ -797,7 +884,7 @@ public class ClassGenerator {
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                         Type.getInternalName(MemoryAccess.class),
                         "setAddressAtOffset",
-                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(MemoryAddress.class)),
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
                         false);
 
                 relOffset += CLinker.C_POINTER.byteSize();
@@ -806,7 +893,7 @@ public class ClassGenerator {
                 long size;
                 long align;
                 if (componentType.isArray()) {
-                    int length = Optional.ofNullable(component.getAnnotation(ArrayValueArg.class)).map(ArrayValueArg::length).orElseThrow(() -> new RuntimeException("Missing ArrayValuerecord annotation"));
+                    int length = Optional.ofNullable(component.getAnnotation(ArrayValueArg.class)).map(ArrayValueArg::length).orElseThrow();
                     var componentSizeAndAlign = InternalUtils.arrayLayoutSize(componentType, length);
                     size = componentSizeAndAlign.size();
                     align = componentSizeAndAlign.alignment();
@@ -847,7 +934,7 @@ public class ClassGenerator {
         // -> ...
         mw.visitLabel(methodEnd);
 
-        mw.visitLocalVariable("memSeg",
+        mw.visitLocalVariable("segment",
                 Type.getDescriptor(MemorySegment.class),
                 null,
                 methodStart, methodEnd,
@@ -914,6 +1001,7 @@ public class ClassGenerator {
     /**
      * This method initialize a newly allocated segment
      *
+     * <p>
      * Operand stack:
      * Before: -> ... -> arg -> argSeg
      * After:  -> ... -> argSegAddr
@@ -938,6 +1026,7 @@ public class ClassGenerator {
             // -> ... -> argSeg -> argSeg -> arg
             mw.visitInsn(Opcodes.POP);
         }
+        // -> ... -> argSeg -> argSeg -> arg
         // -> ... -> argSeg
         deconstructVariable(mw, type, Optional.of(0L), currentLocalVarIndex, scopeLocalVarIndex);
         // -> ... -> argSegAddr

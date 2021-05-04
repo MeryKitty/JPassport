@@ -21,6 +21,10 @@ static_assert(sizeof(int) == 4);
 static_assert(sizeof(long long) == 8);
 
 extern "C" {
+double simple(double d) {
+    return d;
+}
+
 double sumD(const double d1, const double d2)
 {
     return (d1 + d2);

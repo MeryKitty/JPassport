@@ -1,13 +1,10 @@
 package jpassport.impl;
 
-import jdk.incubator.foreign.CLinker;
-import jdk.incubator.foreign.MemoryAddress;
-import jdk.incubator.foreign.MemorySegment;
-import jdk.incubator.foreign.ValueLayout;
+import java.util.*;
+import jdk.incubator.foreign.*;
+
 import jpassport.annotations.ArrayValueArg;
 import jpassport.annotations.RefArg;
-
-import java.util.*;
 
 public class InternalUtils {
 
@@ -47,7 +44,7 @@ public class InternalUtils {
         // Types appear in a type trace can only be either MemoryAddress, MemorySegment, primitive types, or container
         // of valid types
         boolean valid = true;
-        if (type.isPrimitive() || type == String.class || type == MemoryAddress.class) {
+        if (type.isPrimitive() || type == MemoryAddress.class) {
             valid = true;
         } else if (type.isArray()) {
             valid = isValidType(type.getComponentType());
@@ -107,7 +104,7 @@ public class InternalUtils {
         } else if (currentType.isRecord()) {
             for (var component : currentType.getRecordComponents()) {
                 if (component.isAnnotationPresent(RefArg.class)) {
-                    pendingTypeList.add(component.getType())
+                    pendingTypeList.add(component.getType());
                 } else {
                     if (!traverseTypeTraceHelper(component.getType(), checkedTypeList, encounteredType, traverseStack, pendingTypeList)) {
                         valid = false;

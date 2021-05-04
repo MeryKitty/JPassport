@@ -10,7 +10,4 @@ module jpassport.test {
     requires commons.csv;
 
     exports jpassport.test;
-    exports jpassport.test.performance;
-    exports jpassport.test.validity;
-    exports jpassport.test.util;
 }

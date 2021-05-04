@@ -1,6 +1,7 @@
 package jpassport.test.validity;
 
 import jpassport.annotations.Ptr;
+import jpassport.annotations.RefArg;
 import jpassport.annotations.StructPadding;
 
 /**
@@ -11,6 +12,6 @@ public record ComplexStruct(
         @StructPadding(bytes = 4) int ID,
         TestStruct ts,
         @Ptr TestStruct tsPtr,
-        String string)
+        @RefArg byte[] string)
 {
 }

@@ -14,6 +14,8 @@ package jpassport.test.performance;
 import jpassport.test.validity.ComplexStruct;
 import jpassport.test.validity.TestStruct;
 
+import java.nio.charset.StandardCharsets;
+
 public class PureJavaPerf implements PerfTest{
     @Override
     public double sumD(double d, double d2) {
@@ -57,7 +59,7 @@ public class PureJavaPerf implements PerfTest{
         double ret = passStruct(complexStruct[0].ts()) + passStruct(complexStruct[0].tsPtr());
         TestStruct ts = new TestStruct(complexStruct[0].ts().s_int() + 10, complexStruct[0].ts().s_long(), complexStruct[0].ts().s_float(), complexStruct[0].ts().s_double());
         TestStruct tsPtr = new TestStruct(complexStruct[0].tsPtr().s_int() + 20, complexStruct[0].tsPtr().s_long(), complexStruct[0].tsPtr().s_float(), complexStruct[0].tsPtr().s_double());
-        complexStruct[0] = new ComplexStruct(complexStruct[0].ID() + 10, ts, tsPtr, complexStruct[0].string().toUpperCase());
+        complexStruct[0] = new ComplexStruct(complexStruct[0].ID() + 10, ts, tsPtr, new String(complexStruct[0].string(), StandardCharsets.US_ASCII).toUpperCase().getBytes(StandardCharsets.US_ASCII));
         return ret;
     }
 

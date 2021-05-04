@@ -12,9 +12,11 @@
 package jpassport;
 
 import jdk.incubator.foreign.*;
+import jpassport.impl.ClassGenerator;
 import jpassport.impl.ClassWriterLADV;
 
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -35,12 +37,21 @@ public class PassportFactory
      * @param <T>
      * @return A class linked to call into a DLL or SO using the Foreign Linker.
      */
+    public synchronized static <T extends Passport> T link(String libraryName, Class<T> interfaceClass, MethodHandles.Lookup lookup) throws Throwable
+    {
+        if (!Passport.class.isAssignableFrom(interfaceClass)) {
+            throw new IllegalArgumentException("Interface (" + interfaceClass.getSimpleName() + ") of library=" + libraryName + " does not extend " + Passport.class.getSimpleName());
+        } else {
+            return ClassGenerator.build(interfaceClass, lookup, libraryName);
+        }
+    }
+
     public synchronized static <T extends Passport> T link(String libraryName, Class<T> interfaceClass) throws Throwable
     {
         if (!Passport.class.isAssignableFrom(interfaceClass)) {
             throw new IllegalArgumentException("Interface (" + interfaceClass.getSimpleName() + ") of library=" + libraryName + " does not extend " + Passport.class.getSimpleName());
         } else {
-            return buildClass(libraryName, interfaceClass);
+            return ClassGenerator.build(interfaceClass, MethodHandles.lookup(), libraryName);
         }
     }
 
