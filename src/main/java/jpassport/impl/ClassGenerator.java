@@ -309,10 +309,10 @@ public class ClassGenerator {
                 null,
                 null);
 
-        var methodStart = new Label();
-        var tryBlock = new Label();
-        var catchBlock = new Label();
-        var methodEnd = new Label();
+        var userTryBlock = new Label();
+        var userCatchBlock = new Label();
+        var endBlock = new Label();
+
         int scopeLocalVarIndex;
         int firstLocalSlot = 1; // The first slot is "this"
         for (var paramType : method.getParameterTypes()) {
@@ -322,28 +322,228 @@ public class ClassGenerator {
                 firstLocalSlot += 1;
             }
         }
-        // ->
-        mw.visitLabel(methodStart);
-        boolean needScope = method.getReturnType().isArray() || method.getReturnType().isRecord() || method.getAnnotation(RefArg.class) != null;
-        needScope = needScope || Arrays.stream(method.getParameters()).anyMatch(c -> c.getType().isRecord() || c.getType().isArray() || c.getAnnotation(RefArg.class) != null);
+        boolean needScope = !method.getReturnType().isPrimitive() || method.isAnnotationPresent(RefArg.class);
+        needScope = needScope || Arrays.stream(method.getParameters()).anyMatch(c -> !c.getType().isPrimitive() || c.isAnnotationPresent(RefArg.class));
         if (needScope) {
             scopeLocalVarIndex = firstLocalSlot;
-            firstLocalSlot += 1;
-            // -> scope
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(NativeScope.class),
-                    "unboundedScope",
-                    Type.getMethodDescriptor(Type.getType(NativeScope.class)),
-                    true);
-            // ->
-            mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex);
+            firstLocalSlot += 2;
+            var modRetType = InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class));
+            if (modRetType == double.class || modRetType == long.class) {
+                firstLocalSlot += 2;
+            } else if (modRetType != void.class) {
+                firstLocalSlot += 1;
+            }
         } else {
             scopeLocalVarIndex = -1;
         }
 
-        mw.visitTryCatchBlock(tryBlock, catchBlock, catchBlock, Type.getInternalName(Throwable.class));
         // ->
-        mw.visitLabel(tryBlock);
+        mw.visitTryCatchBlock(userTryBlock, userCatchBlock, userCatchBlock, Type.getInternalName(Throwable.class));
+        {
+            // ->
+            mw.visitLabel(userTryBlock);
+            if (needScope) {
+                // ->
+                scopeFulTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+            } else {
+                // ->
+                scopeLessTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+            }
+            mw.visitJumpInsn(Opcodes.GOTO, endBlock);
+        }
+
+        {
+            // -> throwable
+            mw.visitLabel(userCatchBlock);
+            // -> throwable -> runExcep
+            mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(RuntimeException.class));
+            // -> runExcep -> throwable -> runExcep
+            mw.visitInsn(Opcodes.DUP_X1);
+            // -> runExcep -> runExcep -> throwable
+            mw.visitInsn(Opcodes.SWAP);
+            // -> runExcep
+            mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
+                    Type.getInternalName(RuntimeException.class),
+                    "<init>",
+                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
+                    false);
+            // ->
+            mw.visitInsn(Opcodes.ATHROW);
+        }
+        mw.visitLabel(endBlock);
+
+        mw.visitMaxs(0, 0);
+        mw.visitEnd();
+    }
+
+    private static void scopeLessTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
+        // ->
+        // -> (ret)
+        resourceTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+        // ->
+        returnBlock(mw, method, firstLocalSlot);
+    }
+
+    private static void scopeFulTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
+        // ->
+        var userTryBlock = new Label();
+        var resourceTryBlock = new Label();
+        var resourceCatchBlock = new Label();
+        var userCatchBlock = new Label();
+        var modRetType = InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class));
+        // ->
+        mw.visitLabel(userTryBlock);
+        // -> scope
+        mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                Type.getInternalName(NativeScope.class),
+                "unboundedScope",
+                Type.getMethodDescriptor(Type.getType(NativeScope.class)),
+                true);
+        // ->
+        mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex);
+        // -> null
+        mw.visitInsn(Opcodes.ACONST_NULL);
+        // ->
+        mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 1);
+        // ->
+        mw.visitTryCatchBlock(resourceTryBlock, resourceCatchBlock, resourceCatchBlock, Type.getInternalName(Throwable.class));
+
+        {
+            // ->
+            mw.visitLabel(resourceTryBlock);
+            // -> (ret)
+            resourceTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+            // -> (ret)
+            if (modRetType == byte.class || modRetType == boolean.class || modRetType == short.class || modRetType == char.class || modRetType == int.class) {
+                mw.visitVarInsn(Opcodes.ISTORE, scopeLocalVarIndex + 2);
+            } else if (modRetType == long.class) {
+                mw.visitVarInsn(Opcodes.LSTORE, scopeLocalVarIndex + 2);
+            } else if (modRetType == float.class) {
+                mw.visitVarInsn(Opcodes.FSTORE, scopeLocalVarIndex + 2);
+            } else if (modRetType == double.class) {
+                mw.visitVarInsn(Opcodes.DSTORE, scopeLocalVarIndex + 2);
+            } else if (modRetType != void.class) {
+                mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 2);
+            }
+            // ->
+            // ->
+            resourceFinallyBlock(mw, scopeLocalVarIndex);
+            // -> (ret)
+            if (modRetType == byte.class || modRetType == boolean.class || modRetType == short.class || modRetType == char.class || modRetType == int.class) {
+                mw.visitVarInsn(Opcodes.ILOAD, scopeLocalVarIndex + 2);
+            } else if (modRetType == long.class) {
+                mw.visitVarInsn(Opcodes.LLOAD, scopeLocalVarIndex + 2);
+            } else if (modRetType == float.class) {
+                mw.visitVarInsn(Opcodes.FLOAD, scopeLocalVarIndex + 2);
+            } else if (modRetType == double.class) {
+                mw.visitVarInsn(Opcodes.DLOAD, scopeLocalVarIndex + 2);
+            } else if (modRetType != void.class) {
+                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 2);
+            }
+            // ->
+            returnBlock(mw, method, firstLocalSlot);
+        }
+
+        {
+            // -> throwable
+            mw.visitLabel(resourceCatchBlock);
+            // ->
+            mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 1);
+            // ->
+            resourceFinallyBlock(mw, scopeLocalVarIndex);
+            // -> throwable
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
+            // ->
+            mw.visitInsn(Opcodes.ATHROW);
+        }
+        // ->
+        mw.visitLabel(userCatchBlock);
+
+        mw.visitLocalVariable("scope",
+                Type.getDescriptor(NativeScope.class),
+                null,
+                userTryBlock, userCatchBlock,
+                scopeLocalVarIndex);
+        mw.visitLocalVariable("primaryExcep",
+                Type.getDescriptor(Throwable.class),
+                null,
+                userTryBlock, userCatchBlock,
+                scopeLocalVarIndex + 1);
+        if (modRetType != void.class) {
+            mw.visitLocalVariable("rawReturnValue",
+                    Type.getDescriptor(modRetType),
+                    null,
+                    userTryBlock, userCatchBlock,
+                    scopeLocalVarIndex + 2);
+        }
+    }
+
+    private static void resourceFinallyBlock(MethodVisitor mw, final int scopeLocalVarIndex) {
+        // ->
+        var elseBlock = new Label();
+        var endBlock = new Label();
+        var suppressTryBlock = new Label();
+        var suppressCatchBlock = new Label();
+        // ->
+        // -> throwable
+        mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
+        // if
+        // ->
+        mw.visitJumpInsn(Opcodes.IFNULL, elseBlock);
+        {
+            // ->
+            mw.visitTryCatchBlock(suppressTryBlock, suppressCatchBlock, suppressCatchBlock, Type.getInternalName(Throwable.class));
+            // try
+            {
+                // ->
+                mw.visitLabel(suppressTryBlock);
+                // -> scope
+                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+                // ->
+                mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                        Type.getInternalName(NativeScope.class),
+                        "close",
+                        Type.getMethodDescriptor(Type.getType(void.class)),
+                        true);
+                mw.visitJumpInsn(Opcodes.GOTO, endBlock);
+            }
+            // catch (Throwable secondThrowable)
+            {
+                // -> secondThrowable
+                mw.visitLabel(suppressCatchBlock);
+                // -> secondThrowable -> throwable
+                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
+                // -> throwable -> secondThrowable
+                mw.visitInsn(Opcodes.SWAP);
+                // ->
+                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                        Type.getInternalName(Throwable.class),
+                        "addSuppressed",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
+                        false);
+                // ->
+                mw.visitJumpInsn(Opcodes.GOTO, endBlock);
+            }
+        }
+        // else
+        {
+            // ->
+            mw.visitLabel(elseBlock);
+            // -> scope
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+            // ->
+            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                    Type.getInternalName(NativeScope.class),
+                    "close",
+                    Type.getMethodDescriptor(Type.getType(void.class)),
+                    true);
+        }
+        // ->
+        mw.visitLabel(endBlock);
+    }
+
+    private static void resourceTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
+        // ->
         // -> handle
         mw.visitFieldInsn(Opcodes.GETSTATIC,
                 klassFullName,
@@ -388,29 +588,20 @@ public class ClassGenerator {
         var paramTypeWrapperList = Arrays.stream(method.getParameters())
                 .map(param -> InternalUtils.wrapPrimitive(param.getType(), param.isAnnotationPresent(RefArg.class)))
                 .map(Type::getType).toList().toArray(new Type[method.getParameterCount()]);
-        // -> ret
+        // -> (ret)
         mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                 Type.getInternalName(MethodHandle.class),
                 "invokeExact",
                 Type.getMethodDescriptor(retTypeWrapper, paramTypeWrapperList),
                 false);
+    }
+
+    private static void returnBlock(MethodVisitor mw, Method method, int firstLocalSlot) {
+        // -> (ret)
         var retType = method.getReturnType();
         if (!retType.isPrimitive()) {
             ResultResolver.resolveResult(mw, method, firstLocalSlot);
         }
-
-        if (needScope) {
-            // -> (ret)
-            // -> (ret) -> scope
-            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-            // -> (ret)
-            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
-                    Type.getInternalName(NativeScope.class),
-                    "close",
-                    Type.getMethodDescriptor(Type.getType(void.class)),
-                    true);
-        }
-
         // -> (ret)
         if (retType == void.class) {
             // ->
@@ -436,48 +627,6 @@ public class ClassGenerator {
             // ->
             mw.visitInsn(Opcodes.ARETURN);
         }
-
-        // -> throwable
-        mw.visitLabel(catchBlock);
-        if (needScope) {
-            // -> throwable
-            // -> throwable -> scope
-            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-            // -> throwable
-            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
-                    Type.getInternalName(NativeScope.class),
-                    "close",
-                    Type.getMethodDescriptor(Type.getType(void.class)),
-                    true);
-        }
-        // -> throwable
-        // -> throwable -> runExcep
-        mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(RuntimeException.class));
-        // -> runExcep -> throwable -> runExcep
-        mw.visitInsn(Opcodes.DUP_X1);
-        // -> runExcep -> runExcep -> throwable
-        mw.visitInsn(Opcodes.SWAP);
-        // -> runExcep
-        mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
-                Type.getInternalName(RuntimeException.class),
-                "<init>",
-                Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
-                false);
-        // ->
-        mw.visitInsn(Opcodes.ATHROW);
-
-        // ->
-        mw.visitLabel(methodEnd);
-
-        if (needScope) {
-            mw.visitLocalVariable("scope",
-                    Type.getDescriptor(NativeScope.class),
-                    null,
-                    methodStart, methodEnd,
-                    scopeLocalVarIndex);
-        }
-        mw.visitMaxs(0, 0);
-        mw.visitEnd();
     }
 
     private static void getKlassMirror(MethodVisitor mw, Class<?> type) {
