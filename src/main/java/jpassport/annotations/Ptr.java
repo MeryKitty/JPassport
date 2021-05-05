@@ -25,6 +25,6 @@ import java.lang.annotation.Target;
  * }
  */
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.RECORD_COMPONENT, ElementType.FIELD})
+@Target({ElementType.RECORD_COMPONENT})
 public @interface Ptr {
 }

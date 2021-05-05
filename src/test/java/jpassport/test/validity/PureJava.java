@@ -117,7 +117,6 @@ public class PureJava implements TestLink
         d[0] = set;
     }
 
-    @Override
     public double sumMatD(int rows, int cols, double[][] mat)
     {
         double total = 0;
@@ -134,7 +133,6 @@ public class PureJava implements TestLink
         return sumMatD(rows, cols, mat);
     }
 
-    @Override
     public float sumMatF(int rows, int cols, float[][] mat)
     {
         float total = 0;
@@ -151,7 +149,6 @@ public class PureJava implements TestLink
         return sumMatF(rows, cols, mat);
     }
 
-    @Override
     public long sumMatL(int rows, int cols, long[][] mat)
     {
         long total = 0;
@@ -168,7 +165,6 @@ public class PureJava implements TestLink
         return sumMatL(rows, cols, mat);
     }
 
-    @Override
     public int sumMatI(int rows, int cols, int[][] mat)
     {
         int total = 0;
@@ -185,7 +181,6 @@ public class PureJava implements TestLink
         return sumMatI(rows, cols, mat);
     }
 
-    @Override
     public int sumMatS(int rows, int cols, short[][] mat)
     {
         int total = 0;
@@ -202,7 +197,6 @@ public class PureJava implements TestLink
         return sumMatS(rows, cols, mat);
     }
 
-    @Override
     public int sumMatB(int rows, int cols, byte[][] mat)
     {
         int total = 0;
@@ -239,7 +233,7 @@ public class PureJava implements TestLink
         double ret = passStruct(complexStruct[0].ts()) + passStruct(complexStruct[0].tsPtr());
         TestStruct ts = new TestStruct(complexStruct[0].ts().s_int() + 10, complexStruct[0].ts().s_long(), complexStruct[0].ts().s_float(), complexStruct[0].ts().s_double());
         TestStruct tsPtr = new TestStruct(complexStruct[0].tsPtr().s_int() + 20, complexStruct[0].tsPtr().s_long(), complexStruct[0].tsPtr().s_float(), complexStruct[0].tsPtr().s_double());
-        complexStruct[0] = new ComplexStruct(complexStruct[0].ID() + 10, ts, tsPtr, new String(complexStruct[0].string(), StandardCharsets.US_ASCII).toUpperCase().getBytes(StandardCharsets.US_ASCII));
+        complexStruct[0] = new ComplexStruct(complexStruct[0].ID() + 10, ts, tsPtr, complexStruct[0].string().toUpperCase());
         return ret;
     }
 }

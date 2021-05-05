@@ -129,7 +129,7 @@ public class PerformanceTest
         long start = System.nanoTime();
         double m = 0;
         for (double n = 0; n < count; ++n) {
-            ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello".getBytes(StandardCharsets.US_ASCII))};
+            ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello")};
             m = testLib.passComplex(complex);
         }
         return (System.nanoTime() - start) / 1e9;

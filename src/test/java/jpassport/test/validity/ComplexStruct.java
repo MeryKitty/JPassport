@@ -12,6 +12,6 @@ public record ComplexStruct(
         @StructPadding(bytes = 4) int ID,
         TestStruct ts,
         @Ptr TestStruct tsPtr,
-        @RefArg byte[] string)
+        String string)
 {
 }

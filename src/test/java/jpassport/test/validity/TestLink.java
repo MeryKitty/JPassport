@@ -43,23 +43,17 @@ public interface TestLink extends Passport, Library {
     byte sumArrB(@RefArg byte[] i, byte len);
     void readB(@RefArg byte[] d, byte set);
 
-    double sumMatD(int rows, int cols, @RefArg double[][] mat);
     double sumMatDPtrPtr(int rows, int cols, @RefArg double[][] mat);
-    float sumMatF(int rows, int cols, @RefArg float[][] mat);
     float sumMatFPtrPtr(int rows, int cols, @RefArg float[][] mat);
 
-    long sumMatL(int rows, int cols, @RefArg long[][] mat);
     long sumMatLPtrPtr(int rows, int cols, @RefArg long[][] mat);
-    int sumMatI(int rows, int cols, @RefArg int[][] mat);
     int sumMatIPtrPtr(int rows, int cols, @RefArg int[][] mat);
-    int sumMatS(int rows, int cols, @RefArg short[][] mat);
     int sumMatSPtrPtr(int rows, int cols, @RefArg short[][] mat);
-    int sumMatB(int rows, int cols, @RefArg byte[][] mat);
     int sumMatBPtrPtr(int rows, int cols, @RefArg byte[][] mat);
 
     MemoryAddress mallocDoubles(int count);
     void freeDoubleArray(MemoryAddress address);
 
-    double passStruct(TestStruct address);
+    double passStruct(@RefArg TestStruct address);
     double passComplex(@RefArg ComplexStruct[] complexStruct);
 }

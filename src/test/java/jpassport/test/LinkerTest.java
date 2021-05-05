@@ -51,7 +51,6 @@ public class LinkerTest
             allLinksPtrPtr = List.of(testJava, testFL);
         } catch (Throwable e) {
             e.printStackTrace();
-            System.exit(1);
         }
     }
 
@@ -149,7 +148,6 @@ public class LinkerTest
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatD(mat.length, mat[0].length, mat), EPSILON);
             assertEquals(correct, test.sumMatDPtrPtr(mat.length, mat[0].length, mat), EPSILON);
         }
     }
@@ -161,7 +159,6 @@ public class LinkerTest
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatF(mat.length, mat[0].length, mat), EPSILON);
             assertEquals(correct, test.sumMatFPtrPtr(mat.length, mat[0].length, mat), EPSILON);
         }
     }
@@ -173,7 +170,6 @@ public class LinkerTest
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatL(mat.length, mat[0].length, mat));
             assertEquals(correct, test.sumMatLPtrPtr(mat.length, mat[0].length, mat));
         }
     }
@@ -185,7 +181,6 @@ public class LinkerTest
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatI(mat.length, mat[0].length, mat));
             assertEquals(correct, test.sumMatIPtrPtr(mat.length, mat[0].length, mat));
         }
     }
@@ -197,7 +192,6 @@ public class LinkerTest
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatS(mat.length, mat[0].length, mat));
             assertEquals(correct, test.sumMatSPtrPtr(mat.length, mat[0].length, mat));
         }
     }
@@ -209,7 +203,6 @@ public class LinkerTest
         int correct = IntStream.range(1,13).sum();
         for (TestLink test : allLinksPtrPtr)
         {
-            assertEquals(correct, test.sumMatB(mat.length, mat[0].length, mat));
             assertEquals(correct, test.sumMatBPtrPtr(mat.length, mat[0].length, mat));
         }
     }
@@ -242,7 +235,7 @@ public class LinkerTest
     {
         TestStruct ts = new TestStruct(1, 2, 3, 4);
         TestStruct tsPtr = new TestStruct(5, 6, 7, 8);
-        ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello".getBytes(StandardCharsets.US_ASCII))};
+        ComplexStruct[] complex = new ComplexStruct[] {new ComplexStruct(55, ts, tsPtr, "hello")};
 
         double d = testFL.passComplex(complex);
         assertEquals(IntStream.range(1, 9).sum(), d, EPSILON);

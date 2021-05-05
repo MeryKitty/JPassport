@@ -31,20 +31,11 @@ public class InternalUtils {
         }
     }
 
-    public static Pair<Integer, Class<?>> resolveArray(Class<?> type) {
-        int level = 0;
-        while (type.isArray()) {
-            level++;
-            type = type.getComponentType();
-        }
-        return new Pair<>(level, type);
-    }
-
     public static boolean isValidType(Class<?> type) {
         // Types appear in a type trace can only be either MemoryAddress, MemorySegment, primitive types, or container
         // of valid types
         boolean valid = true;
-        if (type.isPrimitive() || type == MemoryAddress.class) {
+        if (type.isPrimitive() || type == MemoryAddress.class || type == String.class) {
             valid = true;
         } else if (type.isArray()) {
             valid = isValidType(type.getComponentType());
@@ -137,6 +128,8 @@ public class InternalUtils {
             result = "C_DOUBLE";
         } else if (type == MemoryAddress.class) {
             result = "C_POINTER";
+        } else if (type == String.class) {
+            result = "C_POINTER";
         } else {
             throw new AssertionError("Unexpected error, type " + type.getSimpleName());
         }
@@ -162,6 +155,8 @@ public class InternalUtils {
         } else if (type == double.class) {
             result = CLinker.C_DOUBLE;
         } else if (type == MemoryAddress.class) {
+            result = CLinker.C_POINTER;
+        } else if (type == String.class) {
             result = CLinker.C_POINTER;
         } else {
             throw new AssertionError("Unexpected type " + type.getSimpleName());
@@ -194,7 +189,7 @@ public class InternalUtils {
                     }
                 } else if (componentType.isArray()) {
                     var componentSizeAndAlign = arrayLayoutSize(componentType, Optional.ofNullable(component.getAnnotation(ArrayValueArg.class))
-                            .map(ArrayValueArg::length)
+                            .map(ArrayValueArg::arrayLength)
                             .orElse(1));
                     currentOffset = align(currentOffset, componentSizeAndAlign.alignment()) + componentSizeAndAlign.size();
                     if (maxAlignment < componentSizeAndAlign.alignment()) {

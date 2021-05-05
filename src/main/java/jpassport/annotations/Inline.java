@@ -6,7 +6,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.PARAMETER, ElementType.METHOD})
-public @interface ArrayValueArg {
+@Target(ElementType.RECORD_COMPONENT)
+public @interface Inline {
     int arrayLength() default -1;
 }

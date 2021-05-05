@@ -115,17 +115,7 @@ public class TestLinkJNADirect
         }
 
         @Override
-        public double sumMatD(int rows, int cols, double[][] mat) {
-            return 0;
-        }
-
-        @Override
         public double sumMatDPtrPtr(int rows, int cols, double[][] mat) {
-            return 0;
-        }
-
-        @Override
-        public float sumMatF(int rows, int cols, float[][] mat) {
             return 0;
         }
 
@@ -135,17 +125,7 @@ public class TestLinkJNADirect
         }
 
         @Override
-        public long sumMatL(int rows, int cols, long[][] mat) {
-            return 0;
-        }
-
-        @Override
         public long sumMatLPtrPtr(int rows, int cols, long[][] mat) {
-            return 0;
-        }
-
-        @Override
-        public int sumMatI(int rows, int cols, int[][] mat) {
             return 0;
         }
 
@@ -154,20 +134,12 @@ public class TestLinkJNADirect
             return 0;
         }
 
-        @Override
-        public int sumMatS(int rows, int cols, short[][] mat) {
-            return 0;
-        }
 
         @Override
         public int sumMatSPtrPtr(int rows, int cols, short[][] mat) {
             return 0;
         }
 
-        @Override
-        public int sumMatB(int rows, int cols, byte[][] mat) {
-            return 0;
-        }
 
         @Override
         public int sumMatBPtrPtr(int rows, int cols, byte[][] mat) {
