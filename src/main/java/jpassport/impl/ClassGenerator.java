@@ -44,6 +44,9 @@ public class ClassGenerator {
 
         {
             // This part declare the method handles that are used to called the native library
+            // #for (method : interfaceKlass.methods()) {
+            //     private static final MethodHandle methodName;
+            // }
             for (var method : methods) {
                 cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
                         method.getName(),
@@ -54,6 +57,7 @@ public class ClassGenerator {
         }
 
         // This part define the default constructor
+        // public KlassName() {}
         {
             var mw = cw.visitMethod(Opcodes.ACC_PUBLIC,
                     "<init>",
@@ -79,6 +83,7 @@ public class ClassGenerator {
         for (var method : methods) {
             methodImplementation(cw, method, klassFullName);
         }
+
         cw.visitEnd();
 
         Files.write(Path.of("./out", klassName + ".class"), cw.toByteArray());
@@ -98,21 +103,22 @@ public class ClassGenerator {
      * static {
      *      var lib = LibraryLookup.ofLibrary(libraryName);
      *      var linker = CLinker.getInstance();
-     *      HANDLE_NUM = linker.downcallHandle(lib.lookup(methodNumName),
-     *              MethodType.methodType(methodNumReturnType, new Class<\?>[]\{methodNumArgType0, ...\}),
-     *              FunctionDescriptor.of(methodNumReturnTypeDesc, new MemoryLayout[]{methodNumArgType0, ...});
      *
-     *      or
+     *      #for (method : interfaceKlass.methods()) {
+     *          HANDLE_NUM = linker.downcallHandle(lib.lookup(methodName),
+     *                  MethodType.methodType(methodRetType, new Class<\?>[]{methodArgType0, ...}),
+     *                  FunctionDescriptor.of(methodRetDesc, new MemoryLayout[]{methodArgDesc0, ...});
      *
-     *      HANDLE_NUM = linker.downcallHandle(lib.lookup(methodNumName),
-     *              MethodType.methodType(void.class, new Class<\?>[]\{methodNumArgType0, ...\}),
-     *              FunctionDescriptor.ofVoid(new MemoryLayout[]{methodNumArgType0, ...});
+     *          or
+     *
+     *          HANDLE_NUM = linker.downcallHandle(lib.lookup(methodName),
+     *                  MethodType.methodType(void.class, new Class<\?>[]{methodArgType0, ...}),
+     *                  FunctionDescriptor.ofVoid(new MemoryLayout[]{methodArgDesc0, ...});
+     *      }
      * }
      * }</pre></blockquote>
      *
-     * for each {@code num} correspond to a method declared in the binding interface
-     *
-     * @param cw The ClassWrite instance
+     * @param cw The ClassWriter instance
      * @param klassFullName The full name (internal name) of the class being written
      * @param methods The list of methods declared in the binding interface
      * @param libraryName The name of the native library needed to be loaded
@@ -280,14 +286,14 @@ public class ClassGenerator {
         mw.visitInsn(Opcodes.POP2);
         mw.visitJumpInsn(Opcodes.GOTO, finish);
         mw.visitLabel(catchBlock);
-        // -> causeExcep
-        // -> causeExcep -> runExcep
+        // -> causeExc
+        // -> causeExc -> runExc
         mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(RuntimeException.class));
-        // -> runExcep -> causeExcep -> runExcep
+        // -> runExc -> causeExc -> runExc
         mw.visitInsn(Opcodes.DUP_X1);
-        // -> runExcep -> runExcep -> causeExcep
+        // -> runExc -> runExc -> causeExc
         mw.visitInsn(Opcodes.SWAP);
-        // -> runExcep
+        // -> runExc
         mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
                 Type.getInternalName(RuntimeException.class),
                 "<init>",
@@ -326,11 +332,12 @@ public class ClassGenerator {
         needScope = needScope || Arrays.stream(method.getParameters()).anyMatch(c -> !c.getType().isPrimitive() || c.isAnnotationPresent(RefArg.class));
         if (needScope) {
             scopeLocalVarIndex = firstLocalSlot;
-            firstLocalSlot += 2;
-            var modRetType = InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class));
-            if (modRetType == double.class || modRetType == long.class) {
+            firstLocalSlot += 1; // slot for scope
+            var retType = method.getReturnType();
+            // slot for return value
+            if (retType == double.class || retType == long.class) {
                 firstLocalSlot += 2;
-            } else if (modRetType != void.class) {
+            } else if (retType != void.class) {
                 firstLocalSlot += 1;
             }
         } else {
@@ -355,13 +362,13 @@ public class ClassGenerator {
         {
             // -> throwable
             mw.visitLabel(userCatchBlock);
-            // -> throwable -> runExcep
+            // -> throwable -> runExc
             mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(RuntimeException.class));
-            // -> runExcep -> throwable -> runExcep
+            // -> runExc -> throwable -> runExc
             mw.visitInsn(Opcodes.DUP_X1);
-            // -> runExcep -> runExcep -> throwable
+            // -> runExc -> runExc -> throwable
             mw.visitInsn(Opcodes.SWAP);
-            // -> runExcep
+            // -> runExc
             mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
                     Type.getInternalName(RuntimeException.class),
                     "<init>",
@@ -390,7 +397,7 @@ public class ClassGenerator {
         var resourceTryBlock = new Label();
         var resourceCatchBlock = new Label();
         var userCatchBlock = new Label();
-        var modRetType = InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class));
+        var retType = method.getReturnType();
         // ->
         mw.visitLabel(userTryBlock);
         // -> scope
@@ -414,31 +421,35 @@ public class ClassGenerator {
             // -> (ret)
             resourceTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
             // -> (ret)
-            if (modRetType == byte.class || modRetType == boolean.class || modRetType == short.class || modRetType == char.class || modRetType == int.class) {
-                mw.visitVarInsn(Opcodes.ISTORE, scopeLocalVarIndex + 2);
-            } else if (modRetType == long.class) {
-                mw.visitVarInsn(Opcodes.LSTORE, scopeLocalVarIndex + 2);
-            } else if (modRetType == float.class) {
-                mw.visitVarInsn(Opcodes.FSTORE, scopeLocalVarIndex + 2);
-            } else if (modRetType == double.class) {
-                mw.visitVarInsn(Opcodes.DSTORE, scopeLocalVarIndex + 2);
-            } else if (modRetType != void.class) {
-                mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 2);
+            if (!retType.isPrimitive()) {
+                ResultResolver.resolveResult(mw, method, firstLocalSlot);
+            }
+            // -> (ret)
+            if (retType == byte.class || retType == boolean.class || retType == short.class || retType == char.class || retType == int.class) {
+                mw.visitVarInsn(Opcodes.ISTORE, scopeLocalVarIndex + 1);
+            } else if (retType == long.class) {
+                mw.visitVarInsn(Opcodes.LSTORE, scopeLocalVarIndex + 1);
+            } else if (retType == float.class) {
+                mw.visitVarInsn(Opcodes.FSTORE, scopeLocalVarIndex + 1);
+            } else if (retType == double.class) {
+                mw.visitVarInsn(Opcodes.DSTORE, scopeLocalVarIndex + 1);
+            } else if (retType != void.class) {
+                mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 1);
             }
             // ->
             // ->
-            resourceFinallyBlock(mw, scopeLocalVarIndex);
+            resourceFinallyBlock(mw, scopeLocalVarIndex, false);
             // -> (ret)
-            if (modRetType == byte.class || modRetType == boolean.class || modRetType == short.class || modRetType == char.class || modRetType == int.class) {
-                mw.visitVarInsn(Opcodes.ILOAD, scopeLocalVarIndex + 2);
-            } else if (modRetType == long.class) {
-                mw.visitVarInsn(Opcodes.LLOAD, scopeLocalVarIndex + 2);
-            } else if (modRetType == float.class) {
-                mw.visitVarInsn(Opcodes.FLOAD, scopeLocalVarIndex + 2);
-            } else if (modRetType == double.class) {
-                mw.visitVarInsn(Opcodes.DLOAD, scopeLocalVarIndex + 2);
-            } else if (modRetType != void.class) {
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 2);
+            if (retType == byte.class || retType == boolean.class || retType == short.class || retType == char.class || retType == int.class) {
+                mw.visitVarInsn(Opcodes.ILOAD, scopeLocalVarIndex + 1);
+            } else if (retType == long.class) {
+                mw.visitVarInsn(Opcodes.LLOAD, scopeLocalVarIndex + 1);
+            } else if (retType == float.class) {
+                mw.visitVarInsn(Opcodes.FLOAD, scopeLocalVarIndex + 1);
+            } else if (retType == double.class) {
+                mw.visitVarInsn(Opcodes.DLOAD, scopeLocalVarIndex + 1);
+            } else if (retType != void.class) {
+                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
             }
             // ->
             returnBlock(mw, method, firstLocalSlot);
@@ -450,7 +461,7 @@ public class ClassGenerator {
             // ->
             mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 1);
             // ->
-            resourceFinallyBlock(mw, scopeLocalVarIndex);
+            resourceFinallyBlock(mw, scopeLocalVarIndex, true);
             // -> throwable
             mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
             // ->
@@ -464,36 +475,30 @@ public class ClassGenerator {
                 null,
                 userTryBlock, userCatchBlock,
                 scopeLocalVarIndex);
-        mw.visitLocalVariable("primaryExcep",
+        mw.visitLocalVariable("primaryExc",
                 Type.getDescriptor(Throwable.class),
                 null,
-                userTryBlock, userCatchBlock,
+                resourceCatchBlock, userCatchBlock,
                 scopeLocalVarIndex + 1);
-        if (modRetType != void.class) {
+        if (retType != void.class) {
             mw.visitLocalVariable("rawReturnValue",
-                    Type.getDescriptor(modRetType),
+                    Type.getDescriptor(retType),
                     null,
-                    userTryBlock, userCatchBlock,
-                    scopeLocalVarIndex + 2);
+                    resourceTryBlock, resourceCatchBlock,
+                    scopeLocalVarIndex + 1);
         }
     }
 
-    private static void resourceFinallyBlock(MethodVisitor mw, final int scopeLocalVarIndex) {
+    private static void resourceFinallyBlock(MethodVisitor mw, final int scopeLocalVarIndex, boolean throwableExist) {
         // ->
-        var elseBlock = new Label();
-        var endBlock = new Label();
+        var endSuppressTryCatch = new Label();
         var suppressTryBlock = new Label();
         var suppressCatchBlock = new Label();
         // ->
-        // -> throwable
-        mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
-        // if
-        // ->
-        mw.visitJumpInsn(Opcodes.IFNULL, elseBlock);
-        {
+        if (throwableExist) {
             // ->
             mw.visitTryCatchBlock(suppressTryBlock, suppressCatchBlock, suppressCatchBlock, Type.getInternalName(Throwable.class));
-            // try
+            // try {
             {
                 // ->
                 mw.visitLabel(suppressTryBlock);
@@ -505,7 +510,7 @@ public class ClassGenerator {
                         "close",
                         Type.getMethodDescriptor(Type.getType(void.class)),
                         true);
-                mw.visitJumpInsn(Opcodes.GOTO, endBlock);
+                mw.visitJumpInsn(Opcodes.GOTO, endSuppressTryCatch);
             }
             // catch (Throwable secondThrowable)
             {
@@ -522,13 +527,10 @@ public class ClassGenerator {
                         Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
                         false);
                 // ->
-                mw.visitJumpInsn(Opcodes.GOTO, endBlock);
+                mw.visitLabel(endSuppressTryCatch);
             }
-        }
-        // else
-        {
+        } else {
             // ->
-            mw.visitLabel(elseBlock);
             // -> scope
             mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
             // ->
@@ -539,7 +541,6 @@ public class ClassGenerator {
                     true);
         }
         // ->
-        mw.visitLabel(endBlock);
     }
 
     private static void resourceTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
@@ -599,9 +600,6 @@ public class ClassGenerator {
     private static void returnBlock(MethodVisitor mw, Method method, int firstLocalSlot) {
         // -> (ret)
         var retType = method.getReturnType();
-        if (!retType.isPrimitive()) {
-            ResultResolver.resolveResult(mw, method, firstLocalSlot);
-        }
         // -> (ret)
         if (retType == void.class) {
             // ->
