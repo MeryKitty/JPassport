@@ -11,49 +11,47 @@
  */
 package jpassport.test.validity;
 
-import com.sun.jna.Library;
 import jdk.incubator.foreign.MemoryAddress;
 import jpassport.Passport;
-import jpassport.annotations.PtrPtrArg;
-import jpassport.annotations.RefArg;
+import jpassport.Pointer;
 
-import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 
-public interface TestLink extends Passport, Library {
-    MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
+public interface TestLink extends Passport {
+    static MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
     double sumD(double d, double d2);
-    double sumArrD(@RefArg double[] d, int len);
-    double sumArrDD(@RefArg double[] d, @RefArg double[] d2, int len);
-    void readD(@RefArg double[] d, int set);
+    double sumArrD(Pointer<double[]> d, int len);
+    double sumArrDD(Pointer<double[]> d, Pointer<double[]> d2, int len);
+    void readD(Pointer<double[]> d, int set);
 
-    float sumArrF(@RefArg float[] i, int len);
-    void readF(@RefArg float[] d, float set);
+    float sumArrF(Pointer<float[]> i, int len);
+    void readF(Pointer<float[]> d, float set);
 
-    long sumArrL(@RefArg long[] i, long len);
-    void readL(@RefArg long[] d, long set);
+    long sumArrL(Pointer<long[]> i, long len);
+    void readL(Pointer<long[]> d, long set);
 
-    int sumArrI(@RefArg int[] i, int len);
-    void readI(@RefArg int[] d, int set);
+    int sumArrI(Pointer<int[]> i, int len);
+    void readI(Pointer<int[]> d, int set);
 
-    short sumArrS(@RefArg short[] i, short len);
-    void readS(@RefArg short[] d, short set);
+    short sumArrS(Pointer<short[]> i, short len);
+    void readS(Pointer<short[]> d, short set);
 
-    byte sumArrB(@RefArg byte[] i, byte len);
-    void readB(@RefArg byte[] d, byte set);
+    byte sumArrB(Pointer<byte[]> i, byte len);
+    void readB(Pointer<byte[]> d, byte set);
 
-    double sumMatDPtrPtr(int rows, int cols, @RefArg double[][] mat);
-    float sumMatFPtrPtr(int rows, int cols, @RefArg float[][] mat);
+    double sumMatDPtrPtr(int rows, int cols, Pointer<Pointer<double[]>[]> mat);
+    float sumMatFPtrPtr(int rows, int cols, Pointer<Pointer<float[]>[]> mat);
 
-    long sumMatLPtrPtr(int rows, int cols, @RefArg long[][] mat);
-    int sumMatIPtrPtr(int rows, int cols, @RefArg int[][] mat);
-    int sumMatSPtrPtr(int rows, int cols, @RefArg short[][] mat);
-    int sumMatBPtrPtr(int rows, int cols, @RefArg byte[][] mat);
+    long sumMatLPtrPtr(int rows, int cols, Pointer<Pointer<long[]>[]> mat);
+    int sumMatIPtrPtr(int rows, int cols, Pointer<Pointer<int[]>[]> mat);
+    int sumMatSPtrPtr(int rows, int cols, Pointer<Pointer<short[]>[]> mat);
+    int sumMatBPtrPtr(int rows, int cols, Pointer<Pointer<byte[]>[]> mat);
 
     MemoryAddress mallocDoubles(int count);
     void freeDoubleArray(MemoryAddress address);
 
-    double passStruct(@RefArg TestStruct address);
-    double passComplex(@RefArg ComplexStruct[] complexStruct);
+    double passStruct(TestStruct address);
+    double passComplexPtr(Pointer<ComplexStruct> complexStruct);
+    double passComplex(ComplexStruct complexStruct);
 }

@@ -1,30 +1,41 @@
 package jpassport.impl;
 
-import jpassport.annotations.RefArg;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
-import java.lang.reflect.Method;
+import java.lang.reflect.AnnotatedType;
 import java.util.Optional;
 
 public class ResultResolver {
-    public static void resolveResult(MethodVisitor mw, Method method, int currentLocalVarIndex) {
-        // -> ... ret
-        if (method.isAnnotationPresent(RefArg.class)) {
-
+    public static void resolveResult(MethodVisitor mw, AnnotatedType annotatedType, int firstLocalSlot, boolean isArgument) {
+        // -> ... modArg -> (arg)
+        if (isArgument) {
+            // -> ... -> modArg -> arg
+            // -> ... -> arg -> modArg
+            mw.visitInsn(Opcodes.SWAP);
+            // -> ... -> arg
+            mw.visitInsn(Opcodes.POP);
+        } else {
+            // -> ... -> modArg
         }
+
     }
 
-    private static void constructVariable(MethodVisitor mw, Class<?> varType, Optional<Long> currentOffset, int currentLocalVarIndex) {
+    private static void constructVariable(MethodVisitor mw, java.lang.reflect.Type type, Optional<Long> currentOffset, int currentLocalVarIndex, boolean isArgument) {
         // -> ... -> memSeg -> (loffset)
 
     }
 
-    private static void constructArray(MethodVisitor mw, Class<?> varType, int currentLocalVarIndex) {
+    private static void constructArray(MethodVisitor mw, java.lang.reflect.Type type, int currentLocalVarIndex, boolean isArgument) {
         // -> ... -> memSeg -> loffset
         throw new UnsupportedOperationException();
     }
 
-    private static void constructRecord(MethodVisitor mw, Class<?> varType, Optional<Long> currentOffset, int currentLocalVarIndex) {
+    private static void constructRecord(MethodVisitor mw, java.lang.reflect.Type type, Optional<Long> currentOffset, int currentLocalVarIndex, boolean isArgument) {
+
+    }
+
+    private static void constructPointer(MethodVisitor mw, java.lang.reflect.Type type, int currentLocalVarIndex, boolean isArgument) {
 
     }
 }

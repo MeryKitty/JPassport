@@ -297,21 +297,21 @@ void freeDoubleArray(double *memory) {
     delete[] memory;
 }
 
-double passStruct(struct PassingData* data)
+double passStruct(PassingData data)
 {
     double ret = 0;
-    ret += (double)data->s_long;
-    ret += data->s_float;
-    ret += data->s_int;
-    ret += data->s_double;
+    ret += (double)data.s_long;
+    ret += data.s_float;
+    ret += data.s_int;
+    ret += data.s_double;
 
     return ret;
 }
 
-double passComplex(struct ComplexPassing* complex)
+double passComplexPtr(ComplexPassing* complex)
 {
-    double ret = passStruct(&complex->s_passingData);
-    ret += passStruct(complex->s_ptrPassingData);
+    double ret = passStruct(complex->s_passingData);
+    ret += passStruct(*(complex->s_ptrPassingData));
 
     int len = strlen(complex->s_string);
     for (int n = 0; n < len; ++n)
@@ -321,5 +321,9 @@ double passComplex(struct ComplexPassing* complex)
     complex->s_passingData.s_int += 10;
     complex->s_ptrPassingData->s_int +=20;
     return ret;
+}
+
+double passComplex(ComplexPassing complex) {
+    return passComplexPtr(&complex);
 }
 }

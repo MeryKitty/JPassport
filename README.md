@@ -174,7 +174,7 @@ double passComplex(struct ComplexPassing* complex)
 ```
 
 ```java
-import jpassport.annotations.RefArg;
+
 
 public record PassingData(
         @StructPadding(bytes = 4) int s_int,
@@ -192,7 +192,8 @@ public record ComplexPassing(
 
 public interface PerfTest extends Passport {
     double passStruct(PassingData structData);
-    double passComplex(@RefArg ComplexPassing[] complexStruct);
+
+    double passComplex(ComplexPassing[] complexStruct);
 }
 ```
 The most important thing to note here is the @StructPadding annotation. When a C compiler compiles a 

@@ -7,6 +7,6 @@ import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.RECORD_COMPONENT)
-public @interface Inline {
-    int arrayLength() default -1;
+public @interface Length {
+    int value();
 }

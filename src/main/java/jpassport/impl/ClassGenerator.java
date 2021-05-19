@@ -1,33 +1,32 @@
 package jpassport.impl;
 
+import jdk.incubator.foreign.*;
+import jpassport.NativeLong;
+import jpassport.Passport;
+import jpassport.Pointer;
+import jpassport.annotations.Layout;
+import jpassport.annotations.Length;
+import jpassport.annotations.NoSideEffect;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.*;
+import org.objectweb.asm.signature.SignatureVisitor;
+import org.objectweb.asm.signature.SignatureWriter;
+
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.nio.ByteOrder;
+import java.lang.reflect.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import jdk.incubator.foreign.*;
-
-import org.objectweb.asm.*;
-import jpassport.Passport;
-import jpassport.annotations.ArrayValueArg;
-import jpassport.annotations.RefArg;
 
 public class ClassGenerator {
-    public static <T extends Passport> T build(Class<T> interfaceKlass, MethodHandles.Lookup lookup, String libraryName) throws IOException, IllegalAccessException {
+    public static <T extends Passport> T build(Class<T> interfaceKlass, MethodHandles.Lookup lookup, String libraryName) throws IllegalAccessException {
         var klassName = interfaceKlass.getSimpleName() + "Impl";
-        var klassFullName = Type.getInternalName(interfaceKlass) + "Impl";
-        if (!klassFullName.equals((interfaceKlass.getPackageName() + "." + klassName).replace('.', '/'))) {
-            throw new AssertionError(String.format("Class internal name %s, expected name %s",
-                    klassFullName, interfaceKlass.getPackageName() + "." + klassName));
-        }
+        var klassFullName = interfaceKlass.getPackageName().replace('.', '/') + '/' + klassName;
         var cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         cw.visit(Opcodes.V16,
                 Opcodes.ACC_PUBLIC,
@@ -86,13 +85,19 @@ public class ClassGenerator {
 
         cw.visitEnd();
 
-        Files.write(Path.of("./out", klassName + ".class"), cw.toByteArray());
+        try {
+            Files.write(Path.of("./out", klassName + ".class"), cw.toByteArray());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         var createdKlass = lookup.defineHiddenClass(cw.toByteArray(), true).lookupClass();
         try {
-            return (T) createdKlass.getDeclaredConstructor().newInstance();
+            @SuppressWarnings("unchecked")
+            var result = (T) createdKlass.getDeclaredConstructor().newInstance();
+            return result;
         } catch (NoSuchMethodException | InstantiationException | InvocationTargetException e) {
-            throw new RuntimeException("Unexpected error", e);
+            throw new AssertionError("Unexpected error", e);
         }
     }
 
@@ -131,7 +136,7 @@ public class ClassGenerator {
                 null);
         var tryBlock = new Label();
         var catchBlock = new Label();
-        var finish = new Label();
+        var endTryCatchBlock = new Label();
         mw.visitTryCatchBlock(tryBlock, catchBlock, catchBlock, Type.getInternalName(Exception.class));
         mw.visitLabel(tryBlock);
         // -> libName
@@ -171,9 +176,9 @@ public class ClassGenerator {
                     false);
             // -> libLookup -> clinker -> clinker -> symbol
             mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LibraryLookup.Symbol.class));
-            var modRetType = InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class));
+            var modRetType = InternalUtils.wrapPrimitive(method.getAnnotatedReturnType());
             var modArgTypeList = Arrays.stream(method.getParameters())
-                    .map(param -> InternalUtils.wrapPrimitive(param.getType(), param.isAnnotationPresent(RefArg.class))).toList();
+                    .map(param -> InternalUtils.wrapPrimitive(param.getAnnotatedType())).toList();
             // -> libLookup -> clinker -> clinker -> symbol -> retType
             getKlassMirror(mw, modRetType);
             if (modArgTypeList.size() == 0) {
@@ -229,7 +234,7 @@ public class ClassGenerator {
                     mw.visitLdcInsn(i);
                     var param = method.getParameters()[i];
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i -> argDesList[i]
-                    getTypeDesc(mw, param.getType(), Optional.ofNullable(param.getAnnotation(RefArg.class)), Optional.ofNullable(param.getAnnotation(ArrayValueArg.class)));
+                    getTypeDesc(mw, param.getAnnotatedType());
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
@@ -242,7 +247,7 @@ public class ClassGenerator {
                         false);
             } else {
                 // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes
-                getTypeDesc(mw, method.getReturnType(), Optional.ofNullable(method.getAnnotation(RefArg.class)), Optional.ofNullable(method.getAnnotation(ArrayValueArg.class)));
+                getTypeDesc(mw, method.getAnnotatedReturnType());
                 // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesSize
                 mw.visitLdcInsn(modArgTypeList.size());
                 // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
@@ -254,7 +259,7 @@ public class ClassGenerator {
                     mw.visitLdcInsn(i);
                     var param = method.getParameters()[i];
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i -> argDesList[i]
-                    getTypeDesc(mw, param.getType(), Optional.ofNullable(param.getAnnotation(RefArg.class)), Optional.ofNullable(param.getAnnotation(ArrayValueArg.class)));
+                    getTypeDesc(mw, param.getAnnotatedType());
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
@@ -284,7 +289,7 @@ public class ClassGenerator {
         // -> libLookup -> clinker
         // ->
         mw.visitInsn(Opcodes.POP2);
-        mw.visitJumpInsn(Opcodes.GOTO, finish);
+        mw.visitJumpInsn(Opcodes.GOTO, endTryCatchBlock);
         mw.visitLabel(catchBlock);
         // -> causeExc
         // -> causeExc -> runExc
@@ -301,7 +306,7 @@ public class ClassGenerator {
                 false);
         // ->
         mw.visitInsn(Opcodes.ATHROW);
-        mw.visitLabel(finish);
+        mw.visitLabel(endTryCatchBlock);
         mw.visitInsn(Opcodes.RETURN);
         mw.visitMaxs(0, 0);
         mw.visitEnd();
@@ -309,10 +314,19 @@ public class ClassGenerator {
 
     private static void methodImplementation(ClassWriter cw, Method method, String klassFullName) {
         // ->
+        var sw = new SignatureWriter();
+        var rsw = sw.visitReturnType();
+        signature(rsw, method.getGenericReturnType());
+        for (var paramType : method.getGenericParameterTypes()) {
+            var psw = sw.visitParameterType();
+            signature(psw, paramType);
+        }
+        sw.visitEnd();
+        String signature = sw.toString();
         var mw = cw.visitMethod(Opcodes.ACC_PUBLIC,
                 method.getName(),
                 Type.getMethodDescriptor(method),
-                null,
+                signature,
                 null);
 
         var userTryBlock = new Label();
@@ -328,20 +342,23 @@ public class ClassGenerator {
                 firstLocalSlot += 1;
             }
         }
-        boolean needScope = !method.getReturnType().isPrimitive() || method.isAnnotationPresent(RefArg.class);
-        needScope = needScope || Arrays.stream(method.getParameters()).anyMatch(c -> !c.getType().isPrimitive() || c.isAnnotationPresent(RefArg.class));
+        boolean needScope = method.getReturnType().isRecord() || method.getReturnType().isArray() || method.getReturnType() == Pointer.class;
+        needScope = needScope || Arrays.stream(method.getParameterTypes()).anyMatch(c -> c.isArray() || c.isRecord() || c == Pointer.class);
         if (needScope) {
             scopeLocalVarIndex = firstLocalSlot;
             firstLocalSlot += 1; // slot for scope
-            var retType = method.getReturnType();
-            // slot for return value
-            if (retType == double.class || retType == long.class) {
-                firstLocalSlot += 2;
-            } else if (retType != void.class) {
-                firstLocalSlot += 1;
-            }
         } else {
             scopeLocalVarIndex = -1;
+        }
+        for (var param : Arrays.stream(method.getParameters())
+                .map(Parameter::getAnnotatedType)
+                .filter((annotatedType -> {
+                    var rawType = InternalUtils.rawType(annotatedType.getType());
+                    return rawType == Pointer.class && !annotatedType.isAnnotationPresent(NoSideEffect.class);
+                }))
+                .map(InternalUtils::wrapPrimitive)
+                .toList()) {
+            firstLocalSlot += 1;
         }
 
         // ->
@@ -351,10 +368,10 @@ public class ClassGenerator {
             mw.visitLabel(userTryBlock);
             if (needScope) {
                 // ->
-                scopeFulTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+                scopefulTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
             } else {
                 // ->
-                scopeLessTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+                scopelessTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
             }
             mw.visitJumpInsn(Opcodes.GOTO, endBlock);
         }
@@ -383,21 +400,20 @@ public class ClassGenerator {
         mw.visitEnd();
     }
 
-    private static void scopeLessTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
+    private static void scopelessTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
         // ->
         // -> (ret)
         resourceTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
         // ->
-        returnBlock(mw, method, firstLocalSlot);
+        returnBlock(mw, method);
     }
 
-    private static void scopeFulTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
+    private static void scopefulTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
         // ->
         var userTryBlock = new Label();
         var resourceTryBlock = new Label();
         var resourceCatchBlock = new Label();
         var userCatchBlock = new Label();
-        var retType = method.getReturnType();
         // ->
         mw.visitLabel(userTryBlock);
         // -> scope
@@ -420,39 +436,16 @@ public class ClassGenerator {
             mw.visitLabel(resourceTryBlock);
             // -> (ret)
             resourceTryBlock(mw, method, klassFullName, firstLocalSlot, scopeLocalVarIndex);
+            // -> (ret) -> scope
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
             // -> (ret)
-            if (!retType.isPrimitive()) {
-                ResultResolver.resolveResult(mw, method, firstLocalSlot);
-            }
-            // -> (ret)
-            if (retType == byte.class || retType == boolean.class || retType == short.class || retType == char.class || retType == int.class) {
-                mw.visitVarInsn(Opcodes.ISTORE, scopeLocalVarIndex + 1);
-            } else if (retType == long.class) {
-                mw.visitVarInsn(Opcodes.LSTORE, scopeLocalVarIndex + 1);
-            } else if (retType == float.class) {
-                mw.visitVarInsn(Opcodes.FSTORE, scopeLocalVarIndex + 1);
-            } else if (retType == double.class) {
-                mw.visitVarInsn(Opcodes.DSTORE, scopeLocalVarIndex + 1);
-            } else if (retType != void.class) {
-                mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 1);
-            }
+            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                    Type.getInternalName(NativeScope.class),
+                    "close",
+                    Type.getMethodDescriptor(Type.getType(void.class)),
+                    true);
             // ->
-            // ->
-            resourceFinallyBlock(mw, scopeLocalVarIndex, false);
-            // -> (ret)
-            if (retType == byte.class || retType == boolean.class || retType == short.class || retType == char.class || retType == int.class) {
-                mw.visitVarInsn(Opcodes.ILOAD, scopeLocalVarIndex + 1);
-            } else if (retType == long.class) {
-                mw.visitVarInsn(Opcodes.LLOAD, scopeLocalVarIndex + 1);
-            } else if (retType == float.class) {
-                mw.visitVarInsn(Opcodes.FLOAD, scopeLocalVarIndex + 1);
-            } else if (retType == double.class) {
-                mw.visitVarInsn(Opcodes.DLOAD, scopeLocalVarIndex + 1);
-            } else if (retType != void.class) {
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
-            }
-            // ->
-            returnBlock(mw, method, firstLocalSlot);
+            returnBlock(mw, method);
         }
 
         {
@@ -461,7 +454,7 @@ public class ClassGenerator {
             // ->
             mw.visitVarInsn(Opcodes.ASTORE, scopeLocalVarIndex + 1);
             // ->
-            resourceFinallyBlock(mw, scopeLocalVarIndex, true);
+            resourceFinallyBlock(mw, scopeLocalVarIndex);
             // -> throwable
             mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
             // ->
@@ -480,57 +473,19 @@ public class ClassGenerator {
                 null,
                 resourceCatchBlock, userCatchBlock,
                 scopeLocalVarIndex + 1);
-        if (retType != void.class) {
-            mw.visitLocalVariable("rawReturnValue",
-                    Type.getDescriptor(retType),
-                    null,
-                    resourceTryBlock, resourceCatchBlock,
-                    scopeLocalVarIndex + 1);
-        }
     }
 
-    private static void resourceFinallyBlock(MethodVisitor mw, final int scopeLocalVarIndex, boolean throwableExist) {
+    private static void resourceFinallyBlock(MethodVisitor mw, final int scopeLocalVarIndex) {
         // ->
         var endSuppressTryCatch = new Label();
         var suppressTryBlock = new Label();
         var suppressCatchBlock = new Label();
         // ->
-        if (throwableExist) {
+        mw.visitTryCatchBlock(suppressTryBlock, suppressCatchBlock, suppressCatchBlock, Type.getInternalName(Throwable.class));
+        // try {
+        {
             // ->
-            mw.visitTryCatchBlock(suppressTryBlock, suppressCatchBlock, suppressCatchBlock, Type.getInternalName(Throwable.class));
-            // try {
-            {
-                // ->
-                mw.visitLabel(suppressTryBlock);
-                // -> scope
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-                // ->
-                mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
-                        Type.getInternalName(NativeScope.class),
-                        "close",
-                        Type.getMethodDescriptor(Type.getType(void.class)),
-                        true);
-                mw.visitJumpInsn(Opcodes.GOTO, endSuppressTryCatch);
-            }
-            // catch (Throwable secondThrowable)
-            {
-                // -> secondThrowable
-                mw.visitLabel(suppressCatchBlock);
-                // -> secondThrowable -> throwable
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
-                // -> throwable -> secondThrowable
-                mw.visitInsn(Opcodes.SWAP);
-                // ->
-                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                        Type.getInternalName(Throwable.class),
-                        "addSuppressed",
-                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
-                        false);
-                // ->
-                mw.visitLabel(endSuppressTryCatch);
-            }
-        } else {
-            // ->
+            mw.visitLabel(suppressTryBlock);
             // -> scope
             mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
             // ->
@@ -539,6 +494,24 @@ public class ClassGenerator {
                     "close",
                     Type.getMethodDescriptor(Type.getType(void.class)),
                     true);
+            mw.visitJumpInsn(Opcodes.GOTO, endSuppressTryCatch);
+        }
+        // catch (Throwable secondThrowable)
+        {
+            // -> secondThrowable
+            mw.visitLabel(suppressCatchBlock);
+            // -> secondThrowable -> throwable
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex + 1);
+            // -> throwable -> secondThrowable
+            mw.visitInsn(Opcodes.SWAP);
+            // ->
+            mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    Type.getInternalName(Throwable.class),
+                    "addSuppressed",
+                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Throwable.class)),
+                    false);
+            // ->
+            mw.visitLabel(endSuppressTryCatch);
         }
         // ->
     }
@@ -550,26 +523,26 @@ public class ClassGenerator {
                 klassFullName,
                 method.getName(),
                 Type.getDescriptor(MethodHandle.class));
-        for (int i = 0, slot = 1; i < method.getParameterCount(); i++) {
+        for (int i = 0, slot = 1, savedArgIndex = scopeLocalVarIndex + 1; i < method.getParameterCount(); i++) {
             // -> ...
             var param = method.getParameters()[i];
-            var paramType = param.getType();
-            if (paramType == boolean.class || paramType == byte.class || paramType == short.class || paramType == char.class || paramType == int.class) {
+            var paramRawType = param.getType();
+            if (paramRawType == boolean.class || paramRawType == byte.class || paramRawType == short.class || paramRawType == char.class || paramRawType == int.class) {
                 // -> ...
                 // -> ... -> arg_i
                 mw.visitVarInsn(Opcodes.ILOAD, slot);
                 slot += 1;
-            } else if (paramType == long.class) {
+            } else if (paramRawType == long.class) {
                 // -> ...
                 // -> ... -> arg_i
                 mw.visitVarInsn(Opcodes.LLOAD, slot);
                 slot += 2;
-            } else if (paramType == float.class) {
+            } else if (paramRawType == float.class) {
                 // -> ...
                 // -> ... -> arg_i
                 mw.visitVarInsn(Opcodes.FLOAD, slot);
                 slot += 1;
-            } else if (paramType == double.class) {
+            } else if (paramRawType == double.class) {
                 // -> ...
                 // -> ... -> arg_i
                 mw.visitVarInsn(Opcodes.DLOAD, slot);
@@ -579,25 +552,89 @@ public class ClassGenerator {
                 // -> ... -> arg_i
                 mw.visitVarInsn(Opcodes.ALOAD, slot);
                 slot += 1;
+                if (paramRawType == NativeLong.class) {
+                    // ... -> wrap
+                    // ... -> larg_i
+                    mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                            Type.getInternalName(NativeLong.class),
+                            "value",
+                            Type.getMethodDescriptor(Type.getType(long.class)),
+                            false);
+                    if (CLinker.C_LONG.byteSize() == 4) {
+                        // ... -> arg_i
+                        mw.visitInsn(Opcodes.L2I);
+                    }
+                    // -> ... -> arg_i
+                }
             }
             // -> ... -> arg_i
             // -> ... -> modArg_i
-            ArgumentResolver.resolveArgument(mw, param, firstLocalSlot, scopeLocalVarIndex);
+            ArgumentResolver.resolveArgument(mw, param.getAnnotatedType(), firstLocalSlot, scopeLocalVarIndex);
+            if (paramRawType == Pointer.class && !param.isAnnotationPresent(NoSideEffect.class)) {
+                // -> ... -> modArg_i -> modArg_i
+                mw.visitInsn(Opcodes.DUP);
+                // -> ... -> modArg_i
+                mw.visitVarInsn(Opcodes.ASTORE, savedArgIndex);
+                savedArgIndex++;
+            }
         }
         // -> handle -> arg0 -> arg1 -> ...
-        var retTypeWrapper = Type.getType(InternalUtils.wrapPrimitive(method.getReturnType(), method.isAnnotationPresent(RefArg.class)));
+        var retTypeWrapper = Type.getType(InternalUtils.wrapPrimitive(method.getAnnotatedReturnType()));
         var paramTypeWrapperList = Arrays.stream(method.getParameters())
-                .map(param -> InternalUtils.wrapPrimitive(param.getType(), param.isAnnotationPresent(RefArg.class)))
+                .map(param -> InternalUtils.wrapPrimitive(param.getAnnotatedType()))
                 .map(Type::getType).toList().toArray(new Type[method.getParameterCount()]);
-        // -> (ret)
+        // -> (modret)
         mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                 Type.getInternalName(MethodHandle.class),
                 "invokeExact",
                 Type.getMethodDescriptor(retTypeWrapper, paramTypeWrapperList),
                 false);
+        // -> (modret)
+        for (int i = 0, slot = 1, savedArgIndex = scopeLocalVarIndex + 1; i < method.getParameterCount(); i++) {
+            // -> (modret)
+            var param = method.getParameters()[i];
+            var paramRawType = param.getType();
+            if (paramRawType == Pointer.class && !param.isAnnotationPresent(NoSideEffect.class)) {
+                // -> (modRet)
+                var pointedType = ((ParameterizedType) param.getParameterizedType()).getActualTypeArguments()[0];
+                // -> (modret) -> arg_i
+                mw.visitVarInsn(Opcodes.ALOAD, slot);
+                // -> (modret) -> arg_i -> arg_i
+                mw.visitInsn(Opcodes.DUP);
+                // -> (modret) -> arg_i -> arg_i -> modarg_i
+                mw.visitVarInsn(Opcodes.ALOAD, savedArgIndex);
+                // -> (modret) -> arg_i -> modarg_i -> arg_i
+                mw.visitInsn(Opcodes.SWAP);
+                // -> (modret) -> arg_i -> retArg_i
+                ResultResolver.resolveResult(mw, param.getAnnotatedType(), firstLocalSlot, true);
+                // -> (modret) -> arg_i -> retContent (uncasted)
+                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                        Type.getInternalName(Pointer.class),
+                        "get",
+                        Type.getMethodDescriptor(Type.getType(Object.class)),
+                        false);
+                // -> (modret) -> arg_i -> retContent
+                mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(InternalUtils.rawType(pointedType)));
+                // -> (modret)
+                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                        Type.getInternalName(Pointer.class),
+                        "set",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(Object.class)),
+                        false);
+                savedArgIndex++;
+            }
+            if (paramRawType == double.class || paramRawType == long.class) {
+                slot += 2;
+            } else {
+                slot += 1;
+            }
+        }
+        // -> (modret)
+        // -> (ret)
+        ResultResolver.resolveResult(mw, method.getAnnotatedReturnType(), firstLocalSlot, false);
     }
 
-    private static void returnBlock(MethodVisitor mw, Method method, int firstLocalSlot) {
+    private static void returnBlock(MethodVisitor mw, Method method) {
         // -> (ret)
         var retType = method.getReturnType();
         // -> (ret)
@@ -620,6 +657,29 @@ public class ClassGenerator {
             // -> ret
             // ->
             mw.visitInsn(Opcodes.DRETURN);
+        } else if (retType == NativeLong.class) {
+            if (CLinker.C_LONG.byteSize() == 4) {
+                // -> ret
+                // -> lret
+                mw.visitInsn(Opcodes.I2L);
+            }
+            // -> lret
+            // -> lret -> wrap
+            mw.visitTypeInsn(Opcodes.NEW, Type.getInternalName(NativeLong.class));
+            // -> wrap -> lret -> wrap
+            mw.visitInsn(Opcodes.DUP_X2);
+            // -> wrap -> wrap -> lret -> wrap
+            mw.visitInsn(Opcodes.DUP_X2);
+            // -> wrap -> wrap -> lret
+            mw.visitInsn(Opcodes.POP);
+            // -> wrap
+            mw.visitMethodInsn(Opcodes.INVOKESPECIAL,
+                    Type.getInternalName(NativeLong.class),
+                    "<init>",
+                    Type.getMethodDescriptor(Type.getType(void.class), Type.getType(long.class)),
+                    false);
+            // ->
+            mw.visitInsn(Opcodes.ARETURN);
         } else {
             // -> ret
             // ->
@@ -632,56 +692,158 @@ public class ClassGenerator {
         if (type.isPrimitive()) {
             // -> ...
             var wrapper = MethodType.methodType(type).wrap().returnType();
-            // -> klass
+            // -> ... -> klass
             mw.visitFieldInsn(Opcodes.GETSTATIC,
                     Type.getInternalName(wrapper),
                     "TYPE",
                     Type.getDescriptor(Class.class));
         } else {
             // -> ...
-            // -> klass
+            // -> ... -> klass
             mw.visitLdcInsn(Type.getType(type));
         }
     }
 
-    private static void getTypeDesc(MethodVisitor mw, Class<?> paramType, Optional<RefArg> refArg, Optional<ArrayValueArg> arrayValueArg) {
+    private static void getTypeDesc(MethodVisitor mw, AnnotatedType annotatedType) {
         // -> ...
-        var modType = InternalUtils.wrapPrimitive(paramType, refArg.isPresent());
-        if (modType != MemorySegment.class) {
+        var rawType = InternalUtils.rawType(annotatedType.getType());
+        if (InternalUtils.isPrimitive(rawType)) {
             // -> ...
-            // -> ... -> paramDesc
+            // -> ... -> desc
             mw.visitFieldInsn(Opcodes.GETSTATIC,
                     Type.getInternalName(CLinker.class),
-                    InternalUtils.cDescriptorName(modType),
+                    InternalUtils.cDescriptorName(rawType),
                     Type.getDescriptor(ValueLayout.class));
-        } else {
+        } else if (rawType.isArray()) {
             // -> ...
-            long size;
-            if (paramType.isArray()) {
-                size = InternalUtils.arrayLayoutSize(paramType, arrayValueArg
-                        .map(ArrayValueArg::arrayLength)
-                        .orElseThrow(() ->
-                                new RuntimeException("Array argument needs to be annotated by either " + ArrayValueArg.class.getSimpleName() + " or " + RefArg.class.getSimpleName())
-                        )).size();
-            } else if (paramType.isRecord()) {
-                size = InternalUtils.recordLayoutSize(paramType).size();
-            } else {
-                throw new AssertionError("Unexpected type " + paramType.getSimpleName());
-            }
-            // -> ... -> paramDesc.size
-            mw.visitLdcInsn(size * 8);
-            // -> ... -> paramDesc.size -> nativeByteOrder
-            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                    Type.getInternalName(ByteOrder.class),
-                    "nativeOrder",
-                    Type.getMethodDescriptor(Type.getType(ByteOrder.class)),
-                    false);
-            // -> ... -> paramDesc
+            var length = Optional.ofNullable(annotatedType.getAnnotation(Length.class))
+                    .orElseThrow(() -> new IllegalArgumentException("Array passed by value must have length"))
+                    .value();
+            // -> ... -> llength
+            mw.visitLdcInsn((long) length);
+            // -> ... -> llength -> componentDesc
+            getTypeDesc(mw, ((AnnotatedArrayType) annotatedType).getAnnotatedGenericComponentType());
+            // -> ... -> desc
             mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                     Type.getInternalName(MemoryLayout.class),
-                    "ofValueBits",
-                    Type.getMethodDescriptor(Type.getType(ValueLayout.class), Type.getType(long.class), Type.getType(ByteOrder.class)),
+                    "ofSequence",
+                    Type.getMethodDescriptor(Type.getType(SequenceLayout.class), Type.getType(long.class), Type.getType(MemoryLayout.class)),
                     true);
+        } else if (rawType.isRecord()) {
+            // -> ...
+            // -> ... -> desc
+            getRecordTypeDesc(mw, rawType);
+        } else if (rawType == Pointer.class) {
+            // -> ...
+            // -> ... -> desc
+            mw.visitFieldInsn(Opcodes.GETSTATIC,
+                    Type.getInternalName(CLinker.class),
+                    "C_POINTER",
+                    Type.getDescriptor(ValueLayout.class));
+        } else if (rawType == String.class) {
+            // -> ...
+            // -> ... -> desc
+            mw.visitFieldInsn(Opcodes.GETSTATIC,
+                    Type.getInternalName(CLinker.class),
+                    "C_POINTER",
+                    Type.getDescriptor(ValueLayout.class));
+        } else if (MemorySegment.class.isAssignableFrom(rawType)) {
+            // -> ...
+            var layout = Optional.ofNullable(annotatedType.getAnnotation(Layout.class))
+                    .orElseThrow(() -> new IllegalArgumentException("MemorySegment passed by value must have specified layout"))
+                    .value();
+            // -> ... -> desc
+            getRecordTypeDesc(mw, layout);
+        } else if (MemoryAddress.class.isAssignableFrom(rawType)) {
+            // -> ...
+            // -> ... -> desc
+            mw.visitFieldInsn(Opcodes.GETSTATIC,
+                    Type.getInternalName(CLinker.class),
+                    "C_POINTER",
+                    Type.getDescriptor(ValueLayout.class));
+        } else {
+            throw new AssertionError("Unexpected type " + annotatedType.getType());
         }
+        // -> ... -> desc
+    }
+
+    private static void getRecordTypeDesc(MethodVisitor mw, Class<?> rawType) {
+        // -> ...
+        var components = rawType.getRecordComponents();
+        long currentOffset = 0;
+        int layoutElements = 0;
+        for (var component : components) {
+            var currentSizeAlign = InternalUtils.layoutSize(component.getAnnotatedType());
+            if (currentOffset % currentSizeAlign.alignment() == 0) {
+                layoutElements += 1;
+            } else {
+                layoutElements += 2;
+            }
+            currentOffset = InternalUtils.align(currentOffset, currentSizeAlign.alignment());
+            currentOffset += currentSizeAlign.size();
+        }
+        // -> ...
+        // -> ... -> componentDescListLength
+        mw.visitLdcInsn(layoutElements);
+        // -> ... -> componentDescList
+        mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
+        currentOffset = 0;
+        for (int i = 0, j = 0; i < components.length; i++, j++) {
+            // -> ... -> componentDescList
+            var component = components[i];
+            var currentSizeAlign = InternalUtils.layoutSize(component.getAnnotatedType());
+            if (currentOffset % currentSizeAlign.alignment() != 0) {
+                long padding = (currentOffset / currentSizeAlign.alignment() + 1) * currentSizeAlign.alignment() - currentOffset;
+                // -> ... -> componentDescList -> componentDescList
+                mw.visitInsn(Opcodes.DUP);
+                // -> ... -> componentDescList -> componentDescList -> j
+                mw.visitLdcInsn(j);
+                // -> ... -> componentDescList -> componentDescList -> j -> lpaddingLength
+                mw.visitLdcInsn(padding * 8);
+                // -> ... -> componentDescList -> componentDescList -> j -> padding
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryLayout.class),
+                        "ofPaddingBits",
+                        Type.getMethodDescriptor(Type.getType(MemoryLayout.class), Type.getType(long.class)),
+                        true);
+                // -> ... -> componentDescList
+                mw.visitInsn(Opcodes.AASTORE);
+                j++;
+            }
+            // -> ... -> componentDescList -> componentDescList
+            mw.visitInsn(Opcodes.DUP);
+            // -> ... -> componentDescList -> componentDescList -> j
+            mw.visitLdcInsn(j);
+            // -> ... -> componentDescList -> componentDescList -> j -> componentDesc
+            getTypeDesc(mw, component.getAnnotatedType());
+            // -> ... -> componentDescList
+            mw.visitInsn(Opcodes.AASTORE);
+
+            currentOffset = InternalUtils.align(currentOffset, currentSizeAlign.alignment());
+            currentOffset += currentSizeAlign.size();
+        }
+        // -> ... -> componentDescList
+        // -> ... -> desc
+        mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                Type.getInternalName(MemoryLayout.class),
+                "ofStruct",
+                Type.getMethodDescriptor(Type.getType(GroupLayout.class), Type.getType(MemoryLayout.class.arrayType())),
+                true);
+    }
+
+    private static void signature(SignatureVisitor sw, java.lang.reflect.Type type) {
+        var rawType = InternalUtils.rawType(type);
+        if (rawType.isPrimitive()) {
+            sw.visitBaseType(Type.getInternalName(rawType).charAt(0));
+        } else {
+            sw.visitClassType(Type.getInternalName(rawType));
+            if (type instanceof ParameterizedType p) {
+                for (var typeParam : p.getActualTypeArguments()) {
+                    var psw = sw.visitTypeArgument('=');
+                    signature(psw, typeParam);
+                }
+            }
+        }
+        sw.visitEnd();
     }
 }

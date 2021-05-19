@@ -99,24 +99,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.0.0</version>
                 <executions>
-                    <execution>
-                        <id>perf-test</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <phase>test</phase>
-                        <configuration>
-                            <executable>java</executable>
-                            <classpathScope>test</classpathScope>
-                            <arguments>
-                                <argument>-Dforeign.restricted=permit</argument>
-                                <argument>--add-modules=jdk.incubator.foreign</argument>
-                                <argument>-cp</argument>
-                                <classpath/>
-                                <argument>jpassport.test.PerformanceTest</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
+
                 </executions>
             </plugin>
         </plugins>

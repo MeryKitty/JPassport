@@ -1,91 +1,101 @@
 package jpassport.impl;
 
 import jdk.incubator.foreign.*;
-import jpassport.annotations.ArrayValueArg;
-import jpassport.annotations.Inline;
-import jpassport.annotations.Ptr;
-import jpassport.annotations.RefArg;
+import jpassport.NativeLong;
+import jpassport.Pointer;
+import jpassport.annotations.Length;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 
-import java.lang.reflect.Parameter;
+import java.lang.reflect.AnnotatedType;
+import java.lang.reflect.GenericArrayType;
+import java.lang.reflect.ParameterizedType;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 public class ArgumentResolver {
-    public static void resolveArgument(MethodVisitor mw, Parameter arg, int currentLocalVarIndex, final int scopeLocalVarIndex) {
+    public static void resolveArgument(MethodVisitor mw, AnnotatedType annotatedType, int firstLocalSlot, final int scopeLocalVarIndex) {
         // -> ... -> arg
-        var argType = arg.getType();
-        if (arg.isAnnotationPresent(RefArg.class)) {
+        var type = annotatedType.getType();
+        var rawType = InternalUtils.rawType(type);
+        if (rawType == Pointer.class) {
             // -> ... -> arg
-            // -> ... -> arg -> scope
+            var pointedType = ((ParameterizedType) type).getActualTypeArguments()[0];
+            var pointedRawType = InternalUtils.rawType(pointedType);
+            // -> ... -> pointedArg (uncasted)
+            mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    Type.getInternalName(Pointer.class),
+                    "get",
+                    Type.getMethodDescriptor(Type.getType(Object.class)),
+                    false);
+            // -> ... -> pointedArg
+            mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(pointedRawType));
+            // -> ... -> pointedArg -> scope
             mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-            if (argType.isArray()) {
-                // -> ... -> arg -> scope
-                // -> ... -> scope -> arg
+            if (pointedRawType.isArray()) {
+                // -> ... -> pointedArg -> scope
+                // -> ... -> scope -> pointedArg
                 mw.visitInsn(Opcodes.SWAP);
-                // -> ... -> arg -> scope -> arg
+                // -> ... -> pointedArg -> scope -> pointedArg
                 mw.visitInsn(Opcodes.DUP_X1);
-                // -> ... -> arg -> scope -> arg.len
+                // -> ... -> pointedArg -> scope -> pointedArg.len
                 mw.visitInsn(Opcodes.ARRAYLENGTH);
-                // -> ... -> arg -> argSeg
-                allocateArray(mw, argType);
+                // -> ... -> pointedArg -> pointedArgSeg
+                allocateArray(mw, pointedRawType);
             } else {
-                // -> ... -> arg -> scope
-                // -> ... -> arg -> argSeg
-                allocateRecordOrPrimitive(mw, argType);
+                // -> ... -> pointedArg -> scope
+                // -> ... -> pointedArg -> pointedArgSeg
+                allocateRecordOrPrimitive(mw, pointedRawType);
             }
             // -> ... -> arg -> argSeg
             // -> ... -> argSegAddr
-            initializeAllocatedObject(mw, argType, currentLocalVarIndex, scopeLocalVarIndex);
-        } else {
-            if (argType.isRecord() || argType.isArray()) {
-                // -> ... -> arg
+            initializeAllocatedObject(mw, pointedType, firstLocalSlot, scopeLocalVarIndex);
+        } else if (rawType.isRecord() || rawType.isArray()) {
+            // -> ... -> arg
+            // -> ... -> arg -> scope
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+            if (rawType.isArray()) {
                 // -> ... -> arg -> scope
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-                if (argType.isArray()) {
-                    // -> ... -> arg -> scope
-                    long length = Optional.ofNullable(arg.getAnnotation(ArrayValueArg.class)).map(ArrayValueArg::arrayLength).orElseThrow();
-                    // -> ... -> arg -> scope -> length
-                    mw.visitLdcInsn(length);
-                    // -> ... -> arg -> argSeg
-                    allocateArray(mw, argType);
-                } else {
-                    // -> ... -> arg -> argSeg
-                    allocateRecordOrPrimitive(mw, argType);
-                }
+                long length = annotatedType.getAnnotation(Length.class).value();
+                // -> ... -> arg -> scope -> length
+                mw.visitLdcInsn(length);
                 // -> ... -> arg -> argSeg
-                // -> ... -> argSeg -> arg -> argSeg
-                mw.visitInsn(Opcodes.DUP_X1);
-                // -> ... -> argSeg -> argSeg -> arg
-                mw.visitInsn(Opcodes.SWAP);
-                // -> ... -> argSeg
-                deconstructVariable(mw, argType, Optional.of(0L), currentLocalVarIndex, scopeLocalVarIndex);
-            } else if (argType == String.class) {
-                // -> ... -> arg
-                // -> ... -> arg -> charset
-                mw.visitFieldInsn(Opcodes.GETSTATIC,
-                        Type.getInternalName(StandardCharsets.class),
-                        "US_ASCII",
-                        Type.getDescriptor(Charset.class));
-                // -> ... -> arg -> charset -> scope
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-                // -> ... -> argSeg
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(CLinker.class),
-                        "toCString",
-                        Type.getMethodDescriptor(Type.getType(MemorySegment.class), Type.getType(String.class), Type.getType(Charset.class), Type.getType(NativeScope.class)),
-                        true);
-                // -> ... -> argSegAddr
-                mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
-                        Type.getInternalName(MemorySegment.class),
-                        "address",
-                        Type.getMethodDescriptor(Type.getType(MemoryAddress.class)),
-                        true);
+                allocateArray(mw, rawType);
+            } else {
+                // -> ... -> arg -> argSeg
+                allocateRecordOrPrimitive(mw, rawType);
             }
+            // -> ... -> arg -> argSeg
+            // -> ... -> argSeg -> arg -> argSeg
+            mw.visitInsn(Opcodes.DUP_X1);
+            // -> ... -> argSeg -> argSeg -> arg
+            mw.visitInsn(Opcodes.SWAP);
+            // -> ... -> argSeg
+            deconstructVariable(mw, rawType, Optional.of(0L), firstLocalSlot, scopeLocalVarIndex);
+        } else if (rawType == String.class) {
+            // -> ... -> arg
+            // -> ... -> arg -> charset
+            mw.visitFieldInsn(Opcodes.GETSTATIC,
+                    Type.getInternalName(StandardCharsets.class),
+                    "US_ASCII",
+                    Type.getDescriptor(Charset.class));
+            // -> ... -> arg -> charset -> scope
+            mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+            // -> ... -> argSeg
+            mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                    Type.getInternalName(CLinker.class),
+                    "toCString",
+                    Type.getMethodDescriptor(Type.getType(MemorySegment.class), Type.getType(String.class), Type.getType(Charset.class), Type.getType(NativeScope.class)),
+                    true);
+            // -> ... -> argSegAddr
+            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                    Type.getInternalName(MemorySegment.class),
+                    "address",
+                    Type.getMethodDescriptor(Type.getType(MemoryAddress.class)),
+                    true);
         }
     }
 
@@ -102,24 +112,26 @@ public class ArgumentResolver {
      * </pre>
      *
      * @param mw
-     * @param varType
+     * @param type
      * @param currentOffset
      * @param currentLocalVarIndex
      * @param scopeLocalVarIndex
      */
-    private static void deconstructVariable(MethodVisitor mw, Class<?> varType, Optional<Long> currentOffset, int currentLocalVarIndex, final int scopeLocalVarIndex) {
+    private static void deconstructVariable(MethodVisitor mw, java.lang.reflect.Type type, Optional<Long> currentOffset, int currentLocalVarIndex, final int scopeLocalVarIndex) {
         // -> ... -> memSeg -> loffset -> arg with nonconstant offset
         // -> ... -> memSeg -> arg with constant offset
-        if (varType.isRecord()) {
+        var rawType = InternalUtils.rawType(type);
+        if (rawType.isRecord()) {
             // -> ... -> memSeg -> loffset -> arg with nonconstant offset
             // -> ... -> memSeg -> arg -> with constant offset
-            deconstructRecord(mw, varType, currentOffset, currentLocalVarIndex, scopeLocalVarIndex);
+            // -> ...
+            deconstructRecord(mw, type, currentOffset, currentLocalVarIndex, scopeLocalVarIndex);
         } else {
             currentOffset.ifPresent(l -> {
                 // -> ... -> memSeg -> arg
                 // -> ... -> memSeg -> arg -> loffset
                 mw.visitLdcInsn(l);
-                if (varType == long.class || varType == double.class) {
+                if (rawType == long.class || rawType == double.class) {
                     // -> ... -> memSeg -> arg -> loffset
                     // -> ... -> memSeg -> loffset -> arg -> loffset
                     mw.visitInsn(Opcodes.DUP2_X2);
@@ -134,7 +146,7 @@ public class ArgumentResolver {
             });
             // -> ... -> memSeg -> loffset -> arg
             // MemoryAccess.setByteAtOffset(memSeg, loffset, arg);
-            if (varType == byte.class || varType == boolean.class) {
+            if (rawType == byte.class || rawType == boolean.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -144,7 +156,7 @@ public class ArgumentResolver {
                         false);
             }
             // MemoryAccess.setShortAtOffset(memSeg, loffset, arg);
-            else if (varType == short.class) {
+            else if (rawType == short.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -154,7 +166,7 @@ public class ArgumentResolver {
                         false);
             }
             // MemoryAccess.setCharAtOffset(memSeg, loffset, arg);
-            else if (varType == char.class) {
+            else if (rawType == char.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -164,7 +176,7 @@ public class ArgumentResolver {
                         false);
             }
             // MemoryAccess.setIntAtOffset(memSeg, loffset, arg);
-            else if (varType == int.class) {
+            else if (rawType == int.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -172,9 +184,36 @@ public class ArgumentResolver {
                         "setIntAtOffset",
                         Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(int.class)),
                         false);
+            } else if (rawType == NativeLong.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ... -> memSeg -> loffset -> largValue
+                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                        Type.getInternalName(NativeLong.class),
+                        "value",
+                        Type.getMethodDescriptor(Type.getType(long.class)),
+                        false);
+                if (CLinker.C_LONG.byteSize() == 4) {
+                    // -> ... -> memSeg -> loffset -> largValue
+                    // -> ... -> memSeg -> loffset -> argValue
+                    mw.visitInsn(Opcodes.L2I);
+                    // -> ...
+                    mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                            Type.getInternalName(MemoryAccess.class),
+                            "setIntAtOffset",
+                            Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(int.class)),
+                            false);
+                } else {
+                    // -> ... -> memSeg -> loffset -> largValue
+                    // -> ...
+                    mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                            Type.getInternalName(MemoryAccess.class),
+                            "setLongAtOffset",
+                            Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(long.class)),
+                            false);
+                }
             }
             // MemoryAccess.setLongAtOffset(memSeg, loffset, arg);
-            else if (varType == long.class) {
+            else if (rawType == long.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -184,7 +223,7 @@ public class ArgumentResolver {
                         false);
             }
             // MemoryAccess.setFloatAtOffset(memSeg, loffset, arg);
-            else if (varType == float.class) {
+            else if (rawType == float.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -194,7 +233,7 @@ public class ArgumentResolver {
                         false);
             }
             // MemoryAccess.setDoubleAtOffset(memSeg, loffset, arg);
-            else if (varType == double.class) {
+            else if (rawType == double.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
                 mw.visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -202,25 +241,19 @@ public class ArgumentResolver {
                         "setDoubleAtOffset",
                         Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(double.class)),
                         false);
-            }
-            // MemoryAccess.setAddressAtOffset(memSeg, loffset, arg);
-            else if (varType == MemoryAddress.class) {
+            } else if (rawType.isArray()) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(MemoryAccess.class),
-                        "setAddressAtOffset",
-                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
-                        false);
-            } else if (varType.isArray()) {
+                deconstructArray(mw, type, currentLocalVarIndex, scopeLocalVarIndex);
+            } else if (rawType == Pointer.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ...
-                deconstructArray(mw, varType, currentLocalVarIndex, scopeLocalVarIndex);
+                deconstructPointer(mw, type, currentLocalVarIndex, scopeLocalVarIndex);
             }
             // var argSeg = CLinker.toCString(arg, StandardCharsets.US_ASCII, scope);
             // var argSegAddr = argSeg.address();
             // MemoryAccess.setAddressAtOffset(memSeg, loffset, argSegAddr);
-            else if (varType == String.class) {
+            else if (rawType == String.class) {
                 // -> ... -> memSeg -> loffset -> arg
                 // -> ... -> memSeg -> loffset -> arg -> charset
                 mw.visitFieldInsn(Opcodes.GETSTATIC,
@@ -243,6 +276,16 @@ public class ArgumentResolver {
                         true);
                 // -> ...
                 deconstructVariable(mw, MemoryAddress.class, Optional.empty(), currentLocalVarIndex, scopeLocalVarIndex);
+            }
+            // MemoryAccess.setAddressAtOffset(memSeg, loffset, arg);
+            else if (rawType == MemoryAddress.class) {
+                // -> ... -> memSeg -> loffset -> arg
+                // -> ...
+                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MemoryAccess.class),
+                        "setAddressAtOffset",
+                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
+                        false);
             } else {
                 throw new AssertionError();
             }
@@ -251,12 +294,21 @@ public class ArgumentResolver {
         // -> ...
     }
 
-    private static void deconstructArray(MethodVisitor mw, Class<?> varType, int currentLocalVarIndex, final int scopeLocalVarIndex) {
+    private static void deconstructArray(MethodVisitor mw, java.lang.reflect.Type type, int currentLocalVarIndex, final int scopeLocalVarIndex) {
         // -> ... -> memSeg -> lbaseOffset -> array
         var methodStart = new Label();
         var forStart = new Label();
         var forEnd = new Label();
-        var componentType = varType.componentType();
+        var rawType = InternalUtils.rawType(type);
+        java.lang.reflect.Type componentType;
+        if (type instanceof GenericArrayType g) {
+            componentType = g.getGenericComponentType();
+        } else if (type instanceof Class<?> c){
+            componentType = c.componentType();
+        } else {
+            throw new AssertionError("Unexpected type " + type.getTypeName() + ", " + type.getClass().getName());
+        }
+        var componentRawType = InternalUtils.rawType(componentType);
         // -> ... -> memSeg -> lbaseOffset -> array
         mw.visitLabel(methodStart);
         // -> ... -> memSeg -> lbaseOffset
@@ -303,59 +355,36 @@ public class ArgumentResolver {
             mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 1);
             // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
             mw.visitInsn(Opcodes.SWAP);
-            if (componentType.isArray()) {
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
+            // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
+            if (componentType == boolean.class || componentType == byte.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.BALOAD);
+            } else if (componentType == short.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.SALOAD);
+            } else if (componentType == char.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.CALOAD);
+            } else if (componentType == int.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.IALOAD);
+            } else if (componentType == long.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.LALOAD);
+            } else if (componentType == float.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.FALOAD);
+            } else if (componentType == double.class) {
+                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+                mw.visitInsn(Opcodes.DALOAD);
+            } else {
                 // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
                 mw.visitInsn(Opcodes.AALOAD);
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index]
-                mw.visitInsn(Opcodes.DUP);
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index].len
-                mw.visitInsn(Opcodes.ARRAYLENGTH);
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index].len -> scope
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> scope -> array[index].len
-                mw.visitInsn(Opcodes.SWAP);
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index] -> array[index]Seg
-                allocateArray(mw, componentType);
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]SegAddr
-                initializeAllocatedObject(mw, componentType, currentLocalVarIndex + 2, scopeLocalVarIndex);
-                // -> ... -> loffset -> array.len -> index
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(MemoryAccess.class),
-                        "setAddressAtOffset",
-                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
-                        false);
-            } else {
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array -> index
-                if (componentType == boolean.class || componentType == byte.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.BALOAD);
-                } else if (componentType == short.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.SALOAD);
-                } else if (componentType == char.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.CALOAD);
-                } else if (componentType == int.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.IALOAD);
-                } else if (componentType == long.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.LALOAD);
-                } else if (componentType == float.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.FALOAD);
-                } else if (componentType == double.class) {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.DALOAD);
-                } else {
-                    // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                    mw.visitInsn(Opcodes.AALOAD);
-                }
-                // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
-                // -> ... -> loffset -> array.len -> index
-                deconstructVariable(mw, componentType, Optional.empty(), currentLocalVarIndex + 2, scopeLocalVarIndex);
             }
+            // -> ... -> loffset -> array.len -> index -> memSeg -> loffset -> array[index]
+            // -> ... -> loffset -> array.len -> index
+            deconstructVariable(mw, componentType, Optional.empty(), currentLocalVarIndex + 2, scopeLocalVarIndex);
+
             // -> ... -> loffset -> array.len -> index
             // -> ... -> loffset -> array.len -> index -> 1
             mw.visitInsn(Opcodes.ICONST_1);
@@ -366,13 +395,17 @@ public class ArgumentResolver {
             // -> ... -> array.len -> index + 1 -> loffset
             mw.visitInsn(Opcodes.POP2);
             long elementSize;
-            if (componentType.isArray()) {
-                elementSize = CLinker.C_POINTER.byteSize();
-            } else if (componentType.isRecord()) {
-                var elementRawSizeAlign = InternalUtils.recordLayoutSize(componentType);
-                elementSize = InternalUtils.align(elementRawSizeAlign.size(), elementRawSizeAlign.alignment());
-            } else {
+            if (InternalUtils.isPrimitive(componentType)) {
                 elementSize = InternalUtils.primitiveLayoutSize(componentType).size();
+            } else if (componentRawType.isArray()) {
+                throw new AssertionError("Can't reach here");
+            } else if (componentRawType.isRecord()) {
+                var elementSizeAlign = InternalUtils.recordLayoutSize(componentType);
+                elementSize = InternalUtils.align(elementSizeAlign.size(), elementSizeAlign.alignment());
+            } else if (componentRawType == Pointer.class){
+                elementSize = CLinker.C_POINTER.byteSize();
+            } else {
+                throw new AssertionError("Unexpected type " + componentType);
             }
             // -> ... -> array.len -> index + 1 -> loffset
             // -> ... -> array.len -> index + 1 -> loffset -> lcomponentSize
@@ -399,7 +432,7 @@ public class ArgumentResolver {
                 methodStart, forEnd,
                 currentLocalVarIndex);
         mw.visitLocalVariable("array",
-                Type.getDescriptor(varType),
+                Type.getDescriptor(rawType),
                 null,
                 methodStart, forEnd,
                 currentLocalVarIndex + 1);
@@ -407,7 +440,7 @@ public class ArgumentResolver {
         // -> ...
     }
 
-    private static void deconstructRecord(MethodVisitor mw, Class<?> varType, Optional<Long> currentOffset, int currentLocalVarIndex, final int scopeLocalVarIndex) {
+    private static void deconstructRecord(MethodVisitor mw, java.lang.reflect.Type type, Optional<Long> currentOffset, int currentLocalVarIndex, final int scopeLocalVarIndex) {
         // -> ... -> memSeg -> loffset -> record       with nonconstant offset
         // -> ... -> memSeg -> record                  with constant offset
         var methodStart = new Label();
@@ -425,117 +458,37 @@ public class ArgumentResolver {
         // -> ...
         mw.visitVarInsn(Opcodes.ASTORE, currentLocalVarIndex);
         long relOffset = 0;
-        for (var component : varType.getRecordComponents()) {
+        var rawType = InternalUtils.rawType(type);
+        for (var component : rawType.getRecordComponents()) {
             // -> ...
-            var componentType = component.getType();
-            if (component.isAnnotationPresent(Ptr.class)) {
-                // -> ... -> scope
-                mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
-                // -> ... -> scope -> record
-                mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 1);
-                // -> ... -> scope -> recordComponent
-                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                        Type.getInternalName(varType),
-                        component.getName(),
-                        Type.getMethodDescriptor(component.getAccessor()),
-                        false);
-
-                if (componentType.isArray()) {
-                    // -> ... -> scope -> recordComponent
-                    // -> ... -> recordComponent -> scope -> recordComponent
-                    mw.visitInsn(Opcodes.DUP_X1);
-                    // -> ... -> recordComponent -> scope -> recordComponent.len
-                    mw.visitInsn(Opcodes.ARRAYLENGTH);
-                    // -> ... -> recordComponent -> componentSeg
-                    allocateArray(mw, componentType);
-                } else {
-                    // -> ... -> scope -> recordComponent
-                    if (componentType != double.class && componentType != long.class) {
-                        // -> ... -> recordComponent -> scope
-                        mw.visitInsn(Opcodes.SWAP);
-                    } else {
-                        // -> ... -> recordComponent -> scope -> recordComponent
-                        mw.visitInsn(Opcodes.DUP2_X1);
-                        // -> ... -> recordComponent -> scope
-                        mw.visitInsn(Opcodes.POP2);
-                    }
-                    // -> ... -> recordComponent -> scope
-                    // -> ... -> recordComponent -> componentSeg
-                    allocateRecordOrPrimitive(mw, componentType);
-                }
-                // -> ... -> recordComponent -> componentSeg
-                // -> ... -> componentSegAddr
-                initializeAllocatedObject(mw, componentType, currentOffset.isEmpty() ? currentLocalVarIndex + 4 : currentLocalVarIndex + 2, scopeLocalVarIndex);
-                // -> ... -> componentSegAddr -> memSeg
-                mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex);
-                // -> ... -> memSeg -> componentSegAddr
-                mw.visitInsn(Opcodes.SWAP);
-                if (currentOffset.isEmpty()) {
-                    // -> ... -> memSeg -> componentSegAddr -> lbaseOffset
-                    mw.visitVarInsn(Opcodes.LLOAD, currentLocalVarIndex + 2);
-                    // -> ... -> memSeg -> componentSegAddr -> lbaseOffset -> lrelOffset
-                    mw.visitLdcInsn(relOffset);
-                    // -> ... -> memSeg -> componentSegAddr -> labsOffset
-                    mw.visitInsn(Opcodes.LADD);
-                } else {
-                    // -> ... -> memSeg -> componentSegAddr -> labsOffset
-                    mw.visitLdcInsn(currentOffset.get() + relOffset);
-                }
-                // -> ... -> memSeg -> componentSegAddr -> labsOffset
-                // -> ... -> memSeg -> labsOffset -> componentSegAddr -> labsOffset
-                mw.visitInsn(Opcodes.DUP2_X1);
-                // -> ... -> memSeg -> labsOffset -> componentSegAddr
-                mw.visitInsn(Opcodes.POP2);
-                // -> ...
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(MemoryAccess.class),
-                        "setAddressAtOffset",
-                        Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
-                        false);
-
-                relOffset += CLinker.C_POINTER.byteSize();
-            } else {
-                // -> ...
-                long size;
-                long align;
-                if (componentType.isArray()) {
-                    int length = Optional.ofNullable(component.getAnnotation(Inline.class)).map(Inline::arrayLength).orElseThrow(() -> new RuntimeException("Record array component must be annotated with either " + Ptr.class.getSimpleName() + " or " + Inline.class.getSimpleName()));
-                    var componentSizeAndAlign = InternalUtils.arrayLayoutSize(componentType, length);
-                    size = componentSizeAndAlign.size();
-                    align = componentSizeAndAlign.alignment();
-                } else if (componentType.isRecord()) {
-                    var componentSizeAndAlign = InternalUtils.recordLayoutSize(componentType);
-                    size = componentSizeAndAlign.size();
-                    align = componentSizeAndAlign.alignment();
-                } else {
-                    var componentSizeAndAlign = InternalUtils.primitiveLayoutSize(componentType);
-                    size = componentSizeAndAlign.size();
-                    align = componentSizeAndAlign.alignment();
-                }
-                relOffset = InternalUtils.align(relOffset, align);
-                // -> ... -> memSeg
-                mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex);
-                if (currentOffset.isEmpty()) {
-                    // -> ... -> memSeg -> lbaseOffset
-                    mw.visitVarInsn(Opcodes.LLOAD, currentLocalVarIndex + 2);
-                    // -> ... -> memSeg -> lbaseOffset -> lrelOffset
-                    mw.visitLdcInsn(relOffset);
-                    // -> ... -> memSeg -> labsOffset
-                    mw.visitInsn(Opcodes.LADD);
-                }
-                // -> ... -> memSeg -> (labsOffset) -> record
-                mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 1);
-                // -> ... -> memSeg -> (labsOffset) -> recordComponent
-                mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                        Type.getInternalName(varType),
-                        component.getName(),
-                        Type.getMethodDescriptor(component.getAccessor()),
-                        false);
-                long tempOffset = relOffset;
-                // -> ...
-                deconstructVariable(mw, componentType, currentOffset.map(l -> l + tempOffset), currentOffset.isEmpty() ? currentLocalVarIndex + 4 : currentLocalVarIndex + 2, scopeLocalVarIndex);
-                relOffset += size;
+            var componentSizeAlign = InternalUtils.layoutSize(component.getAnnotatedType());
+            long size = componentSizeAlign.size();
+            long align = componentSizeAlign.alignment();
+            // -> ...
+            relOffset = InternalUtils.align(relOffset, align);
+            // -> ... -> memSeg
+            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex);
+            if (currentOffset.isEmpty()) {
+                // -> ... -> memSeg -> lbaseOffset
+                mw.visitVarInsn(Opcodes.LLOAD, currentLocalVarIndex + 2);
+                // -> ... -> memSeg -> lbaseOffset -> lrelOffset
+                mw.visitLdcInsn(relOffset);
+                // -> ... -> memSeg -> labsOffset
+                mw.visitInsn(Opcodes.LADD);
             }
+            // -> ... -> memSeg -> (labsOffset)
+            // -> ... -> memSeg -> (labsOffset) -> record
+            mw.visitVarInsn(Opcodes.ALOAD, currentLocalVarIndex + 1);
+            // -> ... -> memSeg -> (labsOffset) -> recordComponent
+            mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    Type.getInternalName(rawType),
+                    component.getName(),
+                    Type.getMethodDescriptor(component.getAccessor()),
+                    false);
+            long tempOffset = relOffset;
+            // -> ...
+            deconstructVariable(mw, component.getGenericType(), currentOffset.map(l -> l + tempOffset), currentOffset.isEmpty() ? currentLocalVarIndex + 4 : currentLocalVarIndex + 2, scopeLocalVarIndex);
+            relOffset += size;
         }
         // -> ...
         mw.visitLabel(methodEnd);
@@ -546,7 +499,7 @@ public class ArgumentResolver {
                 methodStart, methodEnd,
                 currentLocalVarIndex);
         mw.visitLocalVariable("record",
-                Type.getDescriptor(varType),
+                Type.getDescriptor(rawType),
                 null,
                 methodStart, methodEnd,
                 currentLocalVarIndex + 1);
@@ -560,19 +513,75 @@ public class ArgumentResolver {
         // -> ...
     }
 
-    private static void allocateArray(MethodVisitor mw, Class<?> type) {
+    private static void deconstructPointer(MethodVisitor mw, java.lang.reflect.Type type, int currentLocalVarIndex, final int scopeLocalVarIndex) {
+        // -> ... -> memSeg -> loffset -> arg
+        // -> ...
+        var pointedType = ((ParameterizedType)type).getActualTypeArguments()[0];
+        var pointedRawType = InternalUtils.rawType(pointedType);
+        // -> ... -> memSeg -> loffset -> arg -> scope
+        mw.visitVarInsn(Opcodes.ALOAD, scopeLocalVarIndex);
+        // -> ... -> memSeg -> loffset -> scope -> arg
+        mw.visitInsn(Opcodes.SWAP);
+        // -> ... -> memSeg -> loffset -> scope -> pointedArg (uncasted)
+        mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                Type.getInternalName(Pointer.class),
+                "get",
+                Type.getMethodDescriptor(Type.getType(Object.class)),
+                false);
+        // -> ... -> memSeg -> loffset -> scope -> pointedArg
+        mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(pointedRawType));
+
+        if (pointedRawType.isArray()) {
+            // -> ... -> memSeg -> loffset -> scope -> pointedArg
+            // -> ... -> memSeg -> loffset -> pointedArg -> scope -> pointedArg
+            mw.visitInsn(Opcodes.DUP_X1);
+            // -> ... -> memSeg -> loffset -> pointedArg -> scope -> pointedArg.len
+            mw.visitInsn(Opcodes.ARRAYLENGTH);
+            // -> ... -> memSeg -> loffset -> pointedArg -> componentSeg
+            allocateArray(mw, pointedType);
+        } else {
+            // -> ... -> memSeg -> loffset -> scope -> pointedArg
+            // -> ... -> memSeg -> loffset -> pointedArg -> scope
+            mw.visitInsn(Opcodes.SWAP);
+            // -> ... -> memSeg -> loffset -> pointedArg -> pointedArgSeg
+            allocateRecordOrPrimitive(mw, pointedType);
+        }
+        // -> ... -> memSeg -> loffset -> pointedArg -> pointedArgSeg
+        // -> ... -> memSeg -> loffset -> pointedArgSegAddr
+        initializeAllocatedObject(mw, pointedType, currentLocalVarIndex, scopeLocalVarIndex);
+        // -> ...
+        mw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                Type.getInternalName(MemoryAccess.class),
+                "setAddressAtOffset",
+                Type.getMethodDescriptor(Type.getType(void.class), Type.getType(MemorySegment.class), Type.getType(long.class), Type.getType(Addressable.class)),
+                false);
+    }
+
+    private static void allocateArray(MethodVisitor mw, java.lang.reflect.Type type) {
         // -> ... -> scope -> array.len
-        var elementType = type.componentType();
+        java.lang.reflect.Type componentType;
+        if (type instanceof GenericArrayType g) {
+            componentType = g.getGenericComponentType();
+        } else if (type instanceof Class<?> c) {
+            componentType = c.componentType();
+        } else {
+            throw new AssertionError("Unexpected type " + type.getTypeName() + ", " + type.getClass().getName());
+        }
+        var componentRawType = InternalUtils.rawType(componentType);
         // -> ... -> scope -> larray.len
         mw.visitInsn(Opcodes.I2L);
         long elementSize;
-        if (elementType.isRecord()) {
-            var elementSizeAlign = InternalUtils.recordLayoutSize(elementType);
+        if (InternalUtils.isPrimitive(componentType)) {
+            elementSize = InternalUtils.primitiveLayoutSize(componentType).size();
+        } else if (componentRawType.isArray()) {
+            throw new AssertionError("Can't reach here");
+        } else if (componentRawType.isRecord()) {
+            var elementSizeAlign = InternalUtils.recordLayoutSize(componentType);
             elementSize = InternalUtils.align(elementSizeAlign.size(), elementSizeAlign.alignment());
-        } else if (elementType.isArray()) {
+        } else if (componentRawType == Pointer.class){
             elementSize = CLinker.C_POINTER.byteSize();
         } else {
-            elementSize = InternalUtils.primitiveLayoutSize(elementType).size();
+            throw new AssertionError("Unexpected type " + componentType.getTypeName());
         }
         // -> ... -> scope -> larray.len -> lelementSize
         mw.visitLdcInsn(elementSize);
@@ -586,10 +595,11 @@ public class ArgumentResolver {
                 true);
     }
 
-    private static void allocateRecordOrPrimitive(MethodVisitor mw, Class<?> type) {
+    private static void allocateRecordOrPrimitive(MethodVisitor mw, java.lang.reflect.Type type) {
         // -> ... -> scope
         long size;
-        if (type.isRecord()) {
+        var rawType = InternalUtils.rawType(type);
+        if (rawType.isRecord()) {
             size = InternalUtils.recordLayoutSize(type).size();
         } else {
             size = InternalUtils.primitiveLayoutSize(type).size();
@@ -617,7 +627,7 @@ public class ArgumentResolver {
      * @param currentLocalVarIndex
      * @param scopeLocalVarIndex
      */
-    private static void initializeAllocatedObject(MethodVisitor mw, Class<?> type, int currentLocalVarIndex, final int scopeLocalVarIndex) {
+    private static void initializeAllocatedObject(MethodVisitor mw, java.lang.reflect.Type type, int currentLocalVarIndex, final int scopeLocalVarIndex) {
         // -> ... -> arg -> argSeg
         if (type != double.class && type != long.class) {
             // -> ... -> argSeg -> arg -> argSeg
