@@ -315,13 +315,12 @@ public class ClassGenerator {
     private static void methodImplementation(ClassWriter cw, Method method, String klassFullName) {
         // ->
         var sw = new SignatureWriter();
-        var rsw = sw.visitReturnType();
-        signature(rsw, method.getGenericReturnType());
         for (var paramType : method.getGenericParameterTypes()) {
             var psw = sw.visitParameterType();
             signature(psw, paramType);
         }
-        sw.visitEnd();
+        var rsw = sw.visitReturnType();
+        signature(rsw, method.getGenericReturnType());
         String signature = sw.toString();
         var mw = cw.visitMethod(Opcodes.ACC_PUBLIC,
                 method.getName(),
@@ -834,7 +833,18 @@ public class ClassGenerator {
     private static void signature(SignatureVisitor sw, java.lang.reflect.Type type) {
         var rawType = InternalUtils.rawType(type);
         if (rawType.isPrimitive()) {
-            sw.visitBaseType(Type.getInternalName(rawType).charAt(0));
+            sw.visitBaseType(Type.getDescriptor(rawType).charAt(0));
+        } else if (rawType.isArray()) {
+            var psw = sw.visitArrayType();
+            java.lang.reflect.Type componentType;
+            if (type instanceof GenericArrayType g) {
+                componentType = g.getGenericComponentType();
+            } else if (type instanceof Class<?> c) {
+                componentType = c.componentType();
+            } else {
+                throw new AssertionError("Unexpected type " + type.getTypeName() + ", " + type.getClass().getName());
+            }
+            signature(psw, componentType);
         } else {
             sw.visitClassType(Type.getInternalName(rawType));
             if (type instanceof ParameterizedType p) {
@@ -843,7 +853,7 @@ public class ClassGenerator {
                     signature(psw, typeParam);
                 }
             }
+            sw.visitEnd();
         }
-        sw.visitEnd();
     }
 }
