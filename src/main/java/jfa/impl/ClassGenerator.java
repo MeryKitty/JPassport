@@ -45,13 +45,11 @@ public class ClassGenerator {
             // #for (method : interfaceKlass.methods()) {
             //     private static final MethodHandle methodName;
             // }
-            for (var method : methods) {
-                cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
-                        method.getName(),
-                        Type.getDescriptor(MethodHandle.class),
-                        null,
-                        null);
-            }
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
+                    "LIBRARY",
+                    Type.getDescriptor(LibraryLookup.class),
+                    null,
+                    null);
         }
 
         // This part define the default constructor
@@ -146,148 +144,11 @@ public class ClassGenerator {
                 "ofLibrary",
                 Type.getMethodDescriptor(Type.getType(LibraryLookup.class), Type.getType(String.class)),
                 true);
-        // -> libLookup -> clinker
-        mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                Type.getInternalName(CLinker.class),
-                "getInstance",
-                Type.getMethodDescriptor(Type.getType(CLinker.class)),
-                true);
-
-        for (var method : methods) {
-            // -> libLookup -> clinker
-            // -> libLookup -> clinker -> libLookup -> clinker
-            mw.visitInsn(Opcodes.DUP2);
-            // -> libLookup -> clinker -> clinker -> libLookup
-            mw.visitInsn(Opcodes.SWAP);
-            // -> libLookup -> clinker -> clinker -> libLookup -> methodName
-            mw.visitLdcInsn(method.getName());
-            // -> libLookup -> clinker -> clinker -> symbolOptional
-            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
-                    Type.getInternalName(LibraryLookup.class),
-                    "lookup",
-                    Type.getMethodDescriptor(Type.getType(Optional.class), Type.getType(String.class)),
-                    true);
-            // -> libLookup -> clinker -> clinker -> symbol (uncasted)
-            mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                    Type.getInternalName(Optional.class),
-                    "get",
-                    Type.getMethodDescriptor(Type.getType(Object.class)),
-                    false);
-            // -> libLookup -> clinker -> clinker -> symbol
-            mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LibraryLookup.Symbol.class));
-            var modRetType = Utils.wrapPrimitive(method.getAnnotatedReturnType());
-            var modArgTypeList = Arrays.stream(method.getParameters())
-                    .map(param -> Utils.wrapPrimitive(param.getAnnotatedType())).toList();
-            // -> libLookup -> clinker -> clinker -> symbol -> retType
-            getKlassMirror(mw, modRetType);
-            if (modArgTypeList.size() == 0) {
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(MethodType.class),
-                        "methodType",
-                        Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class)),
-                        false);
-            } else if (modArgTypeList.size() == 1) {
-                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argType_0
-                getKlassMirror(mw, modArgTypeList.get(0));
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(MethodType.class),
-                        "methodType",
-                        Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class), Type.getType(Class.class)),
-                        false);
-            } else {
-                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argListSize
-                mw.visitLdcInsn(modArgTypeList.size());
-                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList
-                mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(Class.class));
-                for (int i = 0; i < modArgTypeList.size(); i++) {
-                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList -> argList
-                    mw.visitInsn(Opcodes.DUP);
-                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList -> argList -> i
-                    mw.visitLdcInsn(i);
-                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList -> argList -> i -> argType_i
-                    getKlassMirror(mw, modArgTypeList.get(i));
-                    // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList
-                    mw.visitInsn(Opcodes.AASTORE);
-                }
-                // -> libLookup -> clinker -> clinker -> symbol -> retType -> argList
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(MethodType.class),
-                        "methodType",
-                        Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class), Type.getType(Class.class.arrayType())),
-                        false);
-            }
-
-            // -> libLookup -> clinker -> clinker -> symbol -> methodType
-            if (modRetType == void.class) {
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesSize
-                mw.visitLdcInsn(modArgTypeList.size());
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
-                mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
-                for (int i = 0; i < modArgTypeList.size(); i++) {
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList
-                    mw.visitInsn(Opcodes.DUP);
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i
-                    mw.visitLdcInsn(i);
-                    var param = method.getParameters()[i];
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i -> argDesList[i]
-                    getTypeDesc(mw, param.getAnnotatedType(), Optional.empty());
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
-                    mw.visitInsn(Opcodes.AASTORE);
-                }
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> funcDes
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(FunctionDescriptor.class),
-                        "ofVoid",
-                        Type.getMethodDescriptor(Type.getType(FunctionDescriptor.class), Type.getType(MemoryLayout.class.arrayType())),
-                        false);
-            } else {
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes
-                getTypeDesc(mw, method.getAnnotatedReturnType(), Optional.empty());
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesSize
-                mw.visitLdcInsn(modArgTypeList.size());
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
-                mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
-                for (int i = 0; i < modArgTypeList.size(); i++) {
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList
-                    mw.visitInsn(Opcodes.DUP);
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i
-                    mw.visitLdcInsn(i);
-                    var param = method.getParameters()[i];
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i -> argDesList[i]
-                    getTypeDesc(mw, param.getAnnotatedType(), Optional.empty());
-                    // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
-                    mw.visitInsn(Opcodes.AASTORE);
-                }
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
-                // -> libLookup -> clinker -> clinker -> symbol -> methodType -> funcDes
-                mw.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        Type.getInternalName(FunctionDescriptor.class),
-                        "of",
-                        Type.getMethodDescriptor(Type.getType(FunctionDescriptor.class), Type.getType(MemoryLayout.class), Type.getType(MemoryLayout.class.arrayType())),
-                        false);
-            }
-
-            // -> libLookup -> clinker -> clinker -> symbol -> methodType -> funcDes
-            // -> libLookup -> clinker -> methodHandle
-            mw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
-                    Type.getInternalName(CLinker.class),
-                    "downcallHandle",
-                    Type.getMethodDescriptor(Type.getType(MethodHandle.class), Type.getType(Addressable.class), Type.getType(MethodType.class), Type.getType(FunctionDescriptor.class)),
-                    true);
-            // -> libLookup -> clinker
-            mw.visitFieldInsn(Opcodes.PUTSTATIC,
-                    klassFullName,
-                    method.getName(),
-                    Type.getDescriptor(MethodHandle.class));
-        }
-
-        // -> libLookup -> clinker
         // ->
-        mw.visitInsn(Opcodes.POP2);
+        mw.visitFieldInsn(Opcodes.PUTSTATIC,
+                klassFullName,
+                "LIBRARY",
+                Type.getDescriptor(LibraryLookup.class));
         mw.visitJumpInsn(Opcodes.GOTO, endTryCatchBlock);
         mw.visitLabel(catchBlock);
         // -> causeExc
@@ -309,6 +170,148 @@ public class ClassGenerator {
         mw.visitInsn(Opcodes.RETURN);
         mw.visitMaxs(0, 0);
         mw.visitEnd();
+
+        for (var method : methods) {
+            var lmw = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC,
+                    method.getName() + "HandleLoader",
+                    Type.getMethodDescriptor(Type.getType(MethodHandle.class), Type.getType(MethodHandles.Lookup.class), Type.getType(String.class), Type.getType(Class.class)),
+                    null,
+                    null);
+            // -> clinker
+            lmw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                    Type.getInternalName(CLinker.class),
+                    "getInstance",
+                    Type.getMethodDescriptor(Type.getType(CLinker.class)),
+                    true);
+            // -> clinker -> libLookup
+            lmw.visitFieldInsn(Opcodes.GETSTATIC,
+                    klassFullName,
+                    "LIBRARY",
+                    Type.getDescriptor(LibraryLookup.class));
+            // -> clinker -> libLookup -> methodName
+            lmw.visitLdcInsn(method.getName());
+            // -> clinker -> symbolOptional
+            lmw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                    Type.getInternalName(LibraryLookup.class),
+                    "lookup",
+                    Type.getMethodDescriptor(Type.getType(Optional.class), Type.getType(String.class)),
+                    true);
+            // -> clinker -> symbol (uncasted)
+            lmw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    Type.getInternalName(Optional.class),
+                    "get",
+                    Type.getMethodDescriptor(Type.getType(Object.class)),
+                    false);
+            // -> clinker -> symbol
+            lmw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LibraryLookup.Symbol.class));
+            var modRetType = Utils.wrapPrimitive(method.getAnnotatedReturnType());
+            var modArgTypeList = Arrays.stream(method.getParameters())
+                    .map(param -> Utils.wrapPrimitive(param.getAnnotatedType())).toList();
+            // -> clinker -> symbol -> retType
+            getKlassMirror(lmw, modRetType);
+            if (modArgTypeList.size() == 0) {
+                // -> clinker -> symbol -> methodType
+                lmw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MethodType.class),
+                        "methodType",
+                        Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class)),
+                        false);
+            } else if (modArgTypeList.size() == 1) {
+                // -> clinker -> symbol -> retType -> argType_0
+                getKlassMirror(lmw, modArgTypeList.get(0));
+                // -> clinker -> symbol -> methodType
+                lmw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MethodType.class),
+                        "methodType",
+                        Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class), Type.getType(Class.class)),
+                        false);
+            } else {
+                // -> clinker -> symbol -> retType -> argListSize
+                lmw.visitLdcInsn(modArgTypeList.size());
+                // -> clinker -> symbol -> retType -> argList
+                lmw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(Class.class));
+                for (int i = 0; i < modArgTypeList.size(); i++) {
+                    // -> clinker -> symbol -> retType -> argList -> argList
+                    lmw.visitInsn(Opcodes.DUP);
+                    // -> clinker -> symbol -> retType -> argList -> argList -> i
+                    lmw.visitLdcInsn(i);
+                    // -> clinker -> symbol -> retType -> argList -> argList -> i -> argType_i
+                    getKlassMirror(lmw, modArgTypeList.get(i));
+                    // -> clinker -> symbol -> retType -> argList
+                    lmw.visitInsn(Opcodes.AASTORE);
+                }
+                // -> clinker -> symbol -> retType -> argList
+                // -> clinker -> symbol -> methodType
+                lmw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(MethodType.class),
+                        "methodType",
+                        Type.getMethodDescriptor(Type.getType(MethodType.class), Type.getType(Class.class), Type.getType(Class.class.arrayType())),
+                        false);
+            }
+
+            // -> clinker -> symbol -> methodType
+            if (modRetType == void.class) {
+                // -> clinker -> symbol -> methodType -> argDesSize
+                lmw.visitLdcInsn(modArgTypeList.size());
+                // -> clinker -> symbol -> methodType -> argDesList
+                lmw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
+                for (int i = 0; i < modArgTypeList.size(); i++) {
+                    // -> clinker -> symbol -> methodType -> argDesList -> argDesList
+                    lmw.visitInsn(Opcodes.DUP);
+                    // -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i
+                    lmw.visitLdcInsn(i);
+                    var param = method.getParameters()[i];
+                    // -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i -> argDesList[i]
+                    getTypeDesc(lmw, param.getAnnotatedType(), Optional.empty());
+                    // -> clinker -> symbol -> methodType -> argDesList
+                    lmw.visitInsn(Opcodes.AASTORE);
+                }
+                // -> clinker -> symbol -> methodType -> argDesList
+                // -> clinker -> symbol -> methodType -> funcDes
+                lmw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(FunctionDescriptor.class),
+                        "ofVoid",
+                        Type.getMethodDescriptor(Type.getType(FunctionDescriptor.class), Type.getType(MemoryLayout.class.arrayType())),
+                        false);
+            } else {
+                // -> clinker -> symbol -> methodType -> retDes
+                getTypeDesc(lmw, method.getAnnotatedReturnType(), Optional.empty());
+                // -> clinker -> symbol -> methodType -> retDes -> argDesSize
+                lmw.visitLdcInsn(modArgTypeList.size());
+                // -> clinker -> symbol -> methodType -> retDes -> argDesList
+                lmw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(MemoryLayout.class));
+                for (int i = 0; i < modArgTypeList.size(); i++) {
+                    // -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList
+                    lmw.visitInsn(Opcodes.DUP);
+                    // -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i
+                    lmw.visitLdcInsn(i);
+                    var param = method.getParameters()[i];
+                    // -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i -> argDesList[i]
+                    getTypeDesc(lmw, param.getAnnotatedType(), Optional.empty());
+                    // -> clinker -> symbol -> methodType -> retDes -> argDesList
+                    lmw.visitInsn(Opcodes.AASTORE);
+                }
+                // -> clinker -> symbol -> methodType -> retDes -> argDesList
+                // -> clinker -> symbol -> methodType -> funcDes
+                lmw.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        Type.getInternalName(FunctionDescriptor.class),
+                        "of",
+                        Type.getMethodDescriptor(Type.getType(FunctionDescriptor.class), Type.getType(MemoryLayout.class), Type.getType(MemoryLayout.class.arrayType())),
+                        false);
+            }
+
+            // -> clinker -> symbol -> methodType -> funcDes
+            // -> methodHandle
+            lmw.visitMethodInsn(Opcodes.INVOKEINTERFACE,
+                    Type.getInternalName(CLinker.class),
+                    "downcallHandle",
+                    Type.getMethodDescriptor(Type.getType(MethodHandle.class), Type.getType(Addressable.class), Type.getType(MethodType.class), Type.getType(FunctionDescriptor.class)),
+                    true);
+            // ->
+            lmw.visitInsn(Opcodes.ARETURN);
+            lmw.visitMaxs(0, 0);
+            lmw.visitEnd();
+        }
     }
 
     private static void methodImplementation(ClassWriter cw, Method method, String klassFullName) {
@@ -514,11 +517,14 @@ public class ClassGenerator {
 
     private static void resourceTryBlock(MethodVisitor mw, Method method, String klassFullName, int firstLocalSlot, final int scopeLocalVarIndex) {
         // ->
-        // -> handle
-        mw.visitFieldInsn(Opcodes.GETSTATIC,
+        var bootstrapHandle = new Handle(Opcodes.H_INVOKESTATIC,
                 klassFullName,
-                method.getName(),
-                Type.getDescriptor(MethodHandle.class));
+                method.getName() + "HandleLoader",
+                Type.getMethodDescriptor(Type.getType(MethodHandle.class), Type.getType(MethodHandles.Lookup.class), Type.getType(String.class), Type.getType(Class.class)),
+                false);
+        var handle = new ConstantDynamic(method.getName() + "Handle", Type.getDescriptor(MethodHandle.class), bootstrapHandle);
+        // -> handle
+        mw.visitLdcInsn(handle);
         for (int i = 0, slot = 1, savedArgIndex = scopeLocalVarIndex + 1; i < method.getParameterCount(); i++) {
             // -> ...
             var param = method.getParameters()[i];
