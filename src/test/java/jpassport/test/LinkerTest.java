@@ -46,9 +46,9 @@ public class LinkerTest
         assertEquals(4 + 5, test.sumD(4, 5), EPSILON);
         assertEquals(1+2+3, test.sumArrD(new Pointer<>(new double[] {1, 2, 3}), 3), EPSILON);
         assertEquals(1+2+3+4+5+6, test.sumArrDD(new Pointer<>(new double[] {1, 2, 3}), new Pointer<>(new double[] {4, 5, 6}), 3), EPSILON);
-        double[] v = new double[1];
-        test.readD(new Pointer<>(v), 5);
-        assertEquals(5, v[0], EPSILON);
+        var v = new Pointer<>(new double[1]);
+        test.readD(v, 5);
+        assertEquals(5, v.get()[0], EPSILON);
     }
 
     @Test
@@ -56,9 +56,9 @@ public class LinkerTest
     {
             assertEquals(1+2+3, test.sumArrF(new Pointer<>(new float[] {1, 2, 3}), 3), EPSILON);
 
-            float[] v = new float[1];
-            test.readF(new Pointer<>(v), 5);
-            assertEquals(5, v[0], EPSILON);
+            var v = new Pointer<>(new float[1]);
+            test.readF(v, 5);
+            assertEquals(5, v.get()[0], EPSILON);
     }
 
 
@@ -67,9 +67,9 @@ public class LinkerTest
     {
             assertEquals(1+2+3, test.sumArrL(new Pointer<>(new long[] {1, 2, 3}), 3));
 
-            long[] v = new long[1];
-            test.readL(new Pointer<>(v), 5);
-            assertEquals(5, v[0]);
+            var v = new Pointer<>(new long[1]);
+            test.readL(v, 5);
+            assertEquals(5, v.get()[0]);
     }
 
 
@@ -81,9 +81,9 @@ public class LinkerTest
 
             assertEquals(correct, test.sumArrI(new Pointer<>(testRange), testRange.length));
 
-            int[] v = new int[1];
-            test.readI(new Pointer<>(v), 5);
-            assertEquals(5, v[0]);
+            var v = new Pointer<>(new int[1]);
+            test.readI(v, 5);
+            assertEquals(5, v.get()[0]);
     }
 
 
@@ -92,9 +92,9 @@ public class LinkerTest
     {
             assertEquals(1+2+3, test.sumArrS(new Pointer<>(new short[] {1, 2, 3}), (short)3));
 
-            short[] v = new short[1];
-            test.readS(new Pointer<>(v), (short)5);
-            assertEquals(5, v[0]);
+            var v = new Pointer<>(new short[1]);
+            test.readS(v, (short)5);
+            assertEquals(5, v.get()[0]);
     }
 
 
@@ -103,9 +103,9 @@ public class LinkerTest
     {
             assertEquals(1+2+3, test.sumArrB(new Pointer<>(new byte[] {1, 2, 3}), (byte)3));
 
-            byte[] v = new byte[1];
-            test.readB(new Pointer<>(v), (byte)5);
-            assertEquals(5, v[0]);
+            var v = new Pointer<>(new byte[1]);
+            test.readB(v, (byte)5);
+            assertEquals(5, v.get()[0]);
     }
 
     @Test

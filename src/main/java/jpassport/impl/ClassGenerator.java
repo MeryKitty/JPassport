@@ -600,20 +600,18 @@ public class ClassGenerator {
                 mw.visitVarInsn(Opcodes.ALOAD, slot);
                 // -> (modret) -> arg_i -> arg_i
                 mw.visitInsn(Opcodes.DUP);
-                // -> (modret) -> arg_i -> arg_i -> modarg_i
+                // -> (modret) -> arg_i -> arg_i -> modNewArg_i
                 mw.visitVarInsn(Opcodes.ALOAD, savedArgIndex);
-                // -> (modret) -> arg_i -> modarg_i -> arg_i
+                // -> (modret) -> arg_i -> modNewArg_i -> arg_i
                 mw.visitInsn(Opcodes.SWAP);
-                // -> (modret) -> arg_i -> retArg_i
+                // -> (modret) -> arg_i -> newArg_i
                 ResultResolver.resolveResult(mw, param.getAnnotatedType(), firstLocalSlot, true);
-                // -> (modret) -> arg_i -> retContent (uncasted)
+                // -> (modret) -> arg_i -> newArgContent_i (uncasted)
                 mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                         Type.getInternalName(Pointer.class),
                         "get",
                         Type.getMethodDescriptor(Type.getType(Object.class)),
                         false);
-                // -> (modret) -> arg_i -> retContent
-                mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(InternalUtils.rawType(pointedType)));
                 // -> (modret)
                 mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                         Type.getInternalName(Pointer.class),
@@ -830,7 +828,7 @@ public class ClassGenerator {
                 true);
     }
 
-    private static void signature(SignatureVisitor sw, java.lang.reflect.Type type) {
+    public static void signature(SignatureVisitor sw, java.lang.reflect.Type type) {
         var rawType = InternalUtils.rawType(type);
         if (rawType.isPrimitive()) {
             sw.visitBaseType(Type.getDescriptor(rawType).charAt(0));
@@ -855,5 +853,107 @@ public class ClassGenerator {
             }
             sw.visitEnd();
         }
+    }
+
+    public static void newArray(MethodVisitor mw, java.lang.reflect.Type componentType) {
+        // -> ... -> array.len
+        if (componentType == boolean.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BOOLEAN);
+        } else if (componentType == byte.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BYTE);
+        } else if (componentType == short.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_SHORT);
+        } else if (componentType == char.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_CHAR);
+        } else if (componentType == int.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT);
+        } else if (componentType == long.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_LONG);
+        } else if (componentType == float.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_FLOAT);
+        } else if (componentType == double.class) {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE);
+        } else {
+            // -> ... -> array.len
+            // -> ... -> array
+            mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(InternalUtils.rawType(componentType)));
+        }
+        // -> ... -> array
+    }
+
+    public static void arrayLoad(MethodVisitor mw, java.lang.reflect.Type componentType) {
+        // -> ... -> array -> index
+        if (componentType == boolean.class || componentType == byte.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.BALOAD);
+        } else if (componentType == short.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.SALOAD);
+        } else if (componentType == char.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.CALOAD);
+        } else if (componentType == int.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.IALOAD);
+        } else if (componentType == long.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.LALOAD);
+        } else if (componentType == float.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.FALOAD);
+        } else if (componentType == double.class) {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.DALOAD);
+        } else {
+            // -> ... -> array[index]
+            mw.visitInsn(Opcodes.AALOAD);
+        }
+        // -> ... -> array[index]
+    }
+
+    public static void arrayStore(MethodVisitor mw, java.lang.reflect.Type componentType) {
+        // -> ... -> array -> index -> array[index]
+        if (componentType == boolean.class || componentType == byte.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.BASTORE);
+        } else if (componentType == short.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.SASTORE);
+        } else if (componentType == char.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.CASTORE);
+        } else if (componentType == int.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.IASTORE);
+        } else if (componentType == long.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.LASTORE);
+        } else if (componentType == float.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.FASTORE);
+        } else if (componentType == double.class) {
+            // -> ...
+            mw.visitInsn(Opcodes.DASTORE);
+        } else {
+            // -> ...
+            mw.visitInsn(Opcodes.AASTORE);
+        }
+        // -> ...
     }
 }

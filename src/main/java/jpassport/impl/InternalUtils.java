@@ -94,14 +94,6 @@ public class InternalUtils {
 
         traverseStack.push(currentAnnotatedType);
         encounteredAnnotatedTypeList.add(currentAnnotatedType);
-        if (MemorySegment.class.isAssignableFrom(rawType)) {
-            var layout = currentAnnotatedType.getAnnotation(Layout.class);
-            if (layout == null) {
-                valid = traverseStack.size() == 1;
-            } else {
-                rawType = layout.value();
-            }
-        }
         if (rawType.isArray()) {
             if (!currentAnnotatedType.isAnnotationPresent(Length.class)) {
                 valid = traverseStack.size() == 1;
@@ -123,6 +115,8 @@ public class InternalUtils {
                 valid = p.getAnnotatedActualTypeArguments().length == 1;
                 pendingAnnotatedTypeList.add(p.getAnnotatedActualTypeArguments()[0]);
             }
+        } else if (MemorySegment.class.isAssignableFrom(rawType)) {
+            valid = traverseStack.size() == 1 && !checkedAnnotatedTypeList.isEmpty() && currentAnnotatedType.isAnnotationPresent(Layout.class) && currentAnnotatedType.getAnnotation(Layout.class).value().isRecord();
         }
         traverseStack.pop();
         return valid;
@@ -256,6 +250,10 @@ public class InternalUtils {
             currentOffset += componentSizeAndAlign.size();
         }
         return new SizeData(currentOffset, maxAlignment);
+    }
+
+    public static SizeData pointerLayoutSize() {
+        return new SizeData(CLinker.C_POINTER.byteSize(), CLinker.C_POINTER.byteSize());
     }
 
     public static long align(long currentOffset, long alignment) {
