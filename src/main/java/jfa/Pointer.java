@@ -1,4 +1,4 @@
-package jpassport;
+package jfa;
 
 import java.util.Objects;
 

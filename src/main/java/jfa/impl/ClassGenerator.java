@@ -1,12 +1,11 @@
-package jpassport.impl;
+package jfa.impl;
 
 import jdk.incubator.foreign.*;
-import jpassport.NativeLong;
-import jpassport.Passport;
-import jpassport.Pointer;
-import jpassport.annotations.Layout;
-import jpassport.annotations.Length;
-import jpassport.annotations.NoSideEffect;
+import jfa.NativeLong;
+import jfa.Pointer;
+import jfa.annotations.Layout;
+import jfa.annotations.Length;
+import jfa.annotations.NoSideEffect;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.*;
 import org.objectweb.asm.signature.SignatureVisitor;
@@ -24,7 +23,7 @@ import java.util.List;
 import java.util.Optional;
 
 public class ClassGenerator {
-    public static <T extends Passport> T build(Class<T> interfaceKlass, MethodHandles.Lookup lookup, String libraryName) throws IllegalAccessException {
+    public static <T> T build(Class<T> interfaceKlass, MethodHandles.Lookup lookup, String libraryName) throws IllegalAccessException {
         var klassName = interfaceKlass.getSimpleName() + "Impl";
         var klassFullName = interfaceKlass.getPackageName().replace('.', '/') + '/' + klassName;
         var cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
@@ -97,7 +96,7 @@ public class ClassGenerator {
             var result = (T) createdKlass.getDeclaredConstructor().newInstance();
             return result;
         } catch (NoSuchMethodException | InstantiationException | InvocationTargetException e) {
-            throw new AssertionError("Unexpected error", e);
+            throw new AssertionError("Can't reach here", e);
         }
     }
 
@@ -176,9 +175,9 @@ public class ClassGenerator {
                     false);
             // -> libLookup -> clinker -> clinker -> symbol
             mw.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(LibraryLookup.Symbol.class));
-            var modRetType = InternalUtils.wrapPrimitive(method.getAnnotatedReturnType());
+            var modRetType = Utils.wrapPrimitive(method.getAnnotatedReturnType());
             var modArgTypeList = Arrays.stream(method.getParameters())
-                    .map(param -> InternalUtils.wrapPrimitive(param.getAnnotatedType())).toList();
+                    .map(param -> Utils.wrapPrimitive(param.getAnnotatedType())).toList();
             // -> libLookup -> clinker -> clinker -> symbol -> retType
             getKlassMirror(mw, modRetType);
             if (modArgTypeList.size() == 0) {
@@ -234,7 +233,7 @@ public class ClassGenerator {
                     mw.visitLdcInsn(i);
                     var param = method.getParameters()[i];
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList -> argDesList -> i -> argDesList[i]
-                    getTypeDesc(mw, param.getAnnotatedType());
+                    getTypeDesc(mw, param.getAnnotatedType(), Optional.empty());
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> argDesList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
@@ -247,7 +246,7 @@ public class ClassGenerator {
                         false);
             } else {
                 // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes
-                getTypeDesc(mw, method.getAnnotatedReturnType());
+                getTypeDesc(mw, method.getAnnotatedReturnType(), Optional.empty());
                 // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesSize
                 mw.visitLdcInsn(modArgTypeList.size());
                 // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
@@ -259,7 +258,7 @@ public class ClassGenerator {
                     mw.visitLdcInsn(i);
                     var param = method.getParameters()[i];
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList -> argDesList -> i -> argDesList[i]
-                    getTypeDesc(mw, param.getAnnotatedType());
+                    getTypeDesc(mw, param.getAnnotatedType(), Optional.empty());
                     // -> libLookup -> clinker -> clinker -> symbol -> methodType -> retDes -> argDesList
                     mw.visitInsn(Opcodes.AASTORE);
                 }
@@ -341,8 +340,8 @@ public class ClassGenerator {
                 firstLocalSlot += 1;
             }
         }
-        boolean needScope = method.getReturnType().isRecord() || method.getReturnType().isArray() || method.getReturnType() == Pointer.class;
-        needScope = needScope || Arrays.stream(method.getParameterTypes()).anyMatch(c -> c.isArray() || c.isRecord() || c == Pointer.class);
+        boolean needScope = Utils.isStruct(method.getGenericReturnType()) || method.getReturnType().isArray() || method.getReturnType() == Pointer.class;
+        needScope = needScope || Arrays.stream(method.getParameterTypes()).anyMatch(c -> c.isArray() || Utils.isStruct(c) || c == Pointer.class);
         if (needScope) {
             scopeLocalVarIndex = firstLocalSlot;
             firstLocalSlot += 1; // slot for scope
@@ -350,12 +349,10 @@ public class ClassGenerator {
             scopeLocalVarIndex = -1;
         }
         for (var param : Arrays.stream(method.getParameters())
+                .filter(p -> !p.isAnnotationPresent(NoSideEffect.class))
                 .map(Parameter::getAnnotatedType)
-                .filter((annotatedType -> {
-                    var rawType = InternalUtils.rawType(annotatedType.getType());
-                    return rawType == Pointer.class && !annotatedType.isAnnotationPresent(NoSideEffect.class);
-                }))
-                .map(InternalUtils::wrapPrimitive)
+                .filter(annotatedType -> Utils.rawType(annotatedType.getType()) == Pointer.class)
+                .map(Utils::wrapPrimitive)
                 .toList()) {
             firstLocalSlot += 1;
         }
@@ -552,8 +549,8 @@ public class ClassGenerator {
                 mw.visitVarInsn(Opcodes.ALOAD, slot);
                 slot += 1;
                 if (paramRawType == NativeLong.class) {
-                    // ... -> wrap
-                    // ... -> larg_i
+                    // ... -> arg_i
+                    // ... -> modArg_i
                     mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                             Type.getInternalName(NativeLong.class),
                             "value",
@@ -563,7 +560,7 @@ public class ClassGenerator {
                         // ... -> arg_i
                         mw.visitInsn(Opcodes.L2I);
                     }
-                    // -> ... -> arg_i
+                    // -> ... -> modArg_i
                 }
             }
             // -> ... -> arg_i
@@ -578,9 +575,9 @@ public class ClassGenerator {
             }
         }
         // -> handle -> arg0 -> arg1 -> ...
-        var retTypeWrapper = Type.getType(InternalUtils.wrapPrimitive(method.getAnnotatedReturnType()));
+        var retTypeWrapper = Type.getType(Utils.wrapPrimitive(method.getAnnotatedReturnType()));
         var paramTypeWrapperList = Arrays.stream(method.getParameters())
-                .map(param -> InternalUtils.wrapPrimitive(param.getAnnotatedType()))
+                .map(param -> Utils.wrapPrimitive(param.getAnnotatedType()))
                 .map(Type::getType).toList().toArray(new Type[method.getParameterCount()]);
         // -> (modret)
         mw.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
@@ -701,32 +698,32 @@ public class ClassGenerator {
         }
     }
 
-    private static void getTypeDesc(MethodVisitor mw, AnnotatedType annotatedType) {
+    private static void getTypeDesc(MethodVisitor mw, AnnotatedType annotatedType, Optional<Length> arrayLength) {
         // -> ...
-        var rawType = InternalUtils.rawType(annotatedType.getType());
-        if (InternalUtils.isPrimitive(rawType)) {
+        var type = annotatedType.getType();
+        var rawType = Utils.rawType(type);
+        if (Utils.isPrimitive(type)) {
             // -> ...
             // -> ... -> desc
             mw.visitFieldInsn(Opcodes.GETSTATIC,
                     Type.getInternalName(CLinker.class),
-                    InternalUtils.cDescriptorName(rawType),
+                    Utils.cDescriptorName(rawType),
                     Type.getDescriptor(ValueLayout.class));
         } else if (rawType.isArray()) {
             // -> ...
-            var length = Optional.ofNullable(annotatedType.getAnnotation(Length.class))
-                    .orElseThrow(() -> new IllegalArgumentException("Array passed by value must have length"))
-                    .value();
+            var length = arrayLength.map(Length::value)
+                    .orElseThrow(() -> new IllegalArgumentException("Array passed by value must have length"));
             // -> ... -> llength
             mw.visitLdcInsn((long) length);
             // -> ... -> llength -> componentDesc
-            getTypeDesc(mw, ((AnnotatedArrayType) annotatedType).getAnnotatedGenericComponentType());
+            getTypeDesc(mw, ((AnnotatedArrayType) annotatedType).getAnnotatedGenericComponentType(), Optional.empty());
             // -> ... -> desc
             mw.visitMethodInsn(Opcodes.INVOKESTATIC,
                     Type.getInternalName(MemoryLayout.class),
                     "ofSequence",
                     Type.getMethodDescriptor(Type.getType(SequenceLayout.class), Type.getType(long.class), Type.getType(MemoryLayout.class)),
                     true);
-        } else if (rawType.isRecord()) {
+        } else if (Utils.isStruct(type)) {
             // -> ...
             // -> ... -> desc
             getRecordTypeDesc(mw, rawType);
@@ -770,13 +767,13 @@ public class ClassGenerator {
         long currentOffset = 0;
         int layoutElements = 0;
         for (var component : components) {
-            var currentSizeAlign = InternalUtils.layoutSize(component.getAnnotatedType());
+            var currentSizeAlign = Utils.layoutSize(component.getGenericType(), Optional.ofNullable(component.getAnnotation(Length.class)));
             if (currentOffset % currentSizeAlign.alignment() == 0) {
                 layoutElements += 1;
             } else {
                 layoutElements += 2;
             }
-            currentOffset = InternalUtils.align(currentOffset, currentSizeAlign.alignment());
+            currentOffset = Utils.align(currentOffset, currentSizeAlign.alignment());
             currentOffset += currentSizeAlign.size();
         }
         // -> ...
@@ -788,7 +785,7 @@ public class ClassGenerator {
         for (int i = 0, j = 0; i < components.length; i++, j++) {
             // -> ... -> componentDescList
             var component = components[i];
-            var currentSizeAlign = InternalUtils.layoutSize(component.getAnnotatedType());
+            var currentSizeAlign = Utils.layoutSize(component.getGenericType(), Optional.ofNullable(component.getAnnotation(Length.class)));
             if (currentOffset % currentSizeAlign.alignment() != 0) {
                 long padding = (currentOffset / currentSizeAlign.alignment() + 1) * currentSizeAlign.alignment() - currentOffset;
                 // -> ... -> componentDescList -> componentDescList
@@ -812,11 +809,11 @@ public class ClassGenerator {
             // -> ... -> componentDescList -> componentDescList -> j
             mw.visitLdcInsn(j);
             // -> ... -> componentDescList -> componentDescList -> j -> componentDesc
-            getTypeDesc(mw, component.getAnnotatedType());
+            getTypeDesc(mw, component.getAnnotatedType(), Optional.ofNullable(component.getAnnotation(Length.class)));
             // -> ... -> componentDescList
             mw.visitInsn(Opcodes.AASTORE);
 
-            currentOffset = InternalUtils.align(currentOffset, currentSizeAlign.alignment());
+            currentOffset = Utils.align(currentOffset, currentSizeAlign.alignment());
             currentOffset += currentSizeAlign.size();
         }
         // -> ... -> componentDescList
@@ -829,7 +826,7 @@ public class ClassGenerator {
     }
 
     public static void signature(SignatureVisitor sw, java.lang.reflect.Type type) {
-        var rawType = InternalUtils.rawType(type);
+        var rawType = Utils.rawType(type);
         if (rawType.isPrimitive()) {
             sw.visitBaseType(Type.getDescriptor(rawType).charAt(0));
         } else if (rawType.isArray()) {
@@ -892,7 +889,7 @@ public class ClassGenerator {
         } else {
             // -> ... -> array.len
             // -> ... -> array
-            mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(InternalUtils.rawType(componentType)));
+            mw.visitTypeInsn(Opcodes.ANEWARRAY, Type.getInternalName(Utils.rawType(componentType)));
         }
         // -> ... -> array
     }

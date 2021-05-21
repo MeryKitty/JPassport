@@ -61,7 +61,7 @@ __-Djava.library.path=[path to lib] -Dforeign.restricted=permit__
 
 JPassport works by writing a class that implements your interface, compiling it and passing it back to you.
 By default, the classes are written to the folder specified by System.getProperty("java.io.tmpdir").
-If you provide the system property __"jpassport.build.home"__ then the classes will be written and
+If you provide the system property __"jfa.build.home"__ then the classes will be written and
 compiled there.
 
 # Performance

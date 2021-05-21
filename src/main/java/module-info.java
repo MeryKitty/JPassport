@@ -1,8 +1,7 @@
-module jpassport {
+module jfa {
     requires jdk.incubator.foreign;
-    requires jdk.compiler;
     requires org.objectweb.asm;
 
-    exports jpassport;
-    exports jpassport.annotations;
+    exports jfa;
+    exports jfa.annotations;
 }

@@ -1,22 +1,19 @@
-package jpassport.impl;
+package jfa.impl;
 
 import jdk.incubator.foreign.CLinker;
 import jdk.incubator.foreign.MemoryAccess;
 import jdk.incubator.foreign.MemoryAddress;
 import jdk.incubator.foreign.MemorySegment;
-import jpassport.NativeLong;
-import jpassport.Pointer;
-import jpassport.annotations.Length;
+import jfa.NativeLong;
+import jfa.Pointer;
+import jfa.annotations.Length;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.signature.SignatureWriter;
 
-import java.lang.reflect.AnnotatedType;
-import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.RecordComponent;
+import java.lang.reflect.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -26,7 +23,7 @@ public class ResultResolver {
     public static void resolveResult(MethodVisitor mw, AnnotatedType annotatedType, int firstLocalSlot, boolean isArgument) {
         // -> ... -> modNewArg -> (arg)
         var type = annotatedType.getType();
-        var rawType = InternalUtils.rawType(type);
+        var rawType = Utils.rawType(type);
         if (rawType == Pointer.class) {
             var start = new Label();
             var end = new Label();
@@ -51,10 +48,10 @@ public class ResultResolver {
                         start, end,
                         firstLocalSlot);
             }
-        } else if (rawType.isArray() || rawType.isRecord()) {
-            // -> ... -> modNewArg -> (arg)
-            // -> ... -> newArg
-            constructVariable(mw, type, Optional.of(0L), Optional.of(annotatedType.getAnnotation(Length.class).value()), firstLocalSlot, isArgument);
+        } else if (rawType.isArray()) {
+            throw new AssertionError("Can't reach here");
+        } else if (Utils.isStruct(type)) {
+            constructVariable(mw, type, Optional.of(0L), Optional.empty(), firstLocalSlot, isArgument);
         } else if (rawType == String.class) {
             // -> ... -> modNewArg -> (arg)
             if (isArgument) {
@@ -74,7 +71,7 @@ public class ResultResolver {
                     "toJavaStringRestricted",
                     Type.getMethodDescriptor(Type.getType(String.class), Type.getType(MemoryAddress.class), Type.getType(Charset.class)),
                     true);
-        } else if (!InternalUtils.isPrimitive(rawType) && !MemorySegment.class.isAssignableFrom(rawType) && !MemoryAddress.class.isAssignableFrom(rawType)) {
+        } else if (!Utils.isPrimitive(rawType) && !MemorySegment.class.isAssignableFrom(rawType) && !MemoryAddress.class.isAssignableFrom(rawType)) {
             throw new AssertionError("Unexpected type " + type.getTypeName());
         }
         // -> ... -> newArg
@@ -82,8 +79,8 @@ public class ResultResolver {
 
     private static void constructVariable(MethodVisitor mw, java.lang.reflect.Type type, Optional<Long> currentOffset, Optional<Integer> arrayLength, int currentLocalVarIndex, boolean isArgument) {
         // -> ... -> memSeg -> (loffset) -> (arg)
-        var rawType = InternalUtils.rawType(type);
-        if (rawType.isRecord()) {
+        var rawType = Utils.rawType(type);
+        if (Utils.isStruct(type)) {
             // -> ... -> memSeg -> (loffset) -> (arg)
             constructRecord(mw, type, currentOffset, currentLocalVarIndex, isArgument);
         } else {
@@ -267,16 +264,16 @@ public class ResultResolver {
         } else {
             throw new AssertionError("Unexpected type " + type.getTypeName() + ", " + type.getClass().getName());
         }
-        var componentRawType = InternalUtils.rawType(componentType);
+        var componentRawType = Utils.rawType(componentType);
         SizeData componentSizeAndAlign;
-        if (InternalUtils.isPrimitive(componentType)) {
-            componentSizeAndAlign = InternalUtils.primitiveLayoutSize(componentType);
+        if (Utils.isPrimitive(componentType)) {
+            componentSizeAndAlign = Utils.primitiveLayoutSize(componentType);
         } else if (componentRawType.isArray()) {
             throw new AssertionError("Can't reach here");
-        } else if (componentRawType.isRecord()) {
-            componentSizeAndAlign = InternalUtils.recordLayoutSize(componentType);
+        } else if (Utils.isStruct(componentType)) {
+            componentSizeAndAlign = Utils.recordLayoutSize(componentType);
         } else if (componentRawType == Pointer.class || componentRawType == String.class || MemoryAddress.class.isAssignableFrom(componentRawType)) {
-            componentSizeAndAlign = InternalUtils.pointerLayoutSize();
+            componentSizeAndAlign = Utils.pointerLayoutSize();
         } else {
             throw new AssertionError("Unexpected component type " + componentType.getTypeName());
         }
@@ -389,7 +386,7 @@ public class ResultResolver {
         ClassGenerator.signature(argSig, type);
         if (isArgument) {
             mw.visitLocalVariable("arg",
-                    Type.getDescriptor(InternalUtils.rawType(type)),
+                    Type.getDescriptor(Utils.rawType(type)),
                     argSig.toString(),
                     start, end,
                     currentLocalVarIndex + 3);
@@ -398,7 +395,7 @@ public class ResultResolver {
 
     private static void constructRecord(MethodVisitor mw, java.lang.reflect.Type type, Optional<Long> currentOffset, int currentLocalVarIndex, boolean isArgument) {
         // -> ... -> memSeg -> (loffset) -> (arg)
-        var rawType = InternalUtils.rawType(type);
+        var rawType = Utils.rawType(type);
         int argVarIndex = currentOffset.isPresent() ? currentLocalVarIndex : currentLocalVarIndex + 2;
         int nextVarIndex = isArgument ? argVarIndex + 1 : argVarIndex;
         var start = new Label();
@@ -426,10 +423,10 @@ public class ResultResolver {
         long relOffset = 0;
         for (var component : rawType.getRecordComponents()) {
             // -> ... -> newArg -> newArg -> ... -> memSeg
-            var componentSizeAlign = InternalUtils.layoutSize(component.getAnnotatedType());
+            var componentSizeAlign = Utils.layoutSize(component.getGenericType(), Optional.ofNullable(component.getAnnotation(Length.class)));
             long size = componentSizeAlign.size();
             long align = componentSizeAlign.alignment();
-            relOffset = InternalUtils.align(relOffset, align);
+            relOffset = Utils.align(relOffset, align);
             // -> ... -> newArg -> newArg -> ... -> memSeg -> memSeg
             mw.visitInsn(Opcodes.DUP);
             if (currentOffset.isEmpty()) {
@@ -536,7 +533,7 @@ public class ResultResolver {
     private static void constructPointerHelper(MethodVisitor mw, java.lang.reflect.Type type, int currentLocalVarIndex, boolean isArgument) {
         // -> ... -> modNewArg
         var pointedType = ((ParameterizedType) type).getActualTypeArguments()[0];
-        var pointedRawType = InternalUtils.rawType(pointedType);
+        var pointedRawType = Utils.rawType(pointedType);
         // -> ... -> modNewArg
         if (isArgument) {
             // -> ... -> modNewArg -> arg
@@ -562,21 +559,21 @@ public class ResultResolver {
                 } else {
                     throw new AssertionError("Unexpected type " + pointedType.getTypeName() + ", " + pointedType.getClass().getName());
                 }
-                var pointedComponentRawType = InternalUtils.rawType(pointedComponentType);
+                var pointedComponentRawType = Utils.rawType(pointedComponentType);
                 SizeData pointedComponentSizeAndData;
-                if (InternalUtils.isPrimitive(pointedComponentType)) {
-                    pointedComponentSizeAndData = InternalUtils.primitiveLayoutSize(pointedComponentType);
+                if (Utils.isPrimitive(pointedComponentType)) {
+                    pointedComponentSizeAndData = Utils.primitiveLayoutSize(pointedComponentType);
                 } else if (pointedComponentRawType.isArray()) {
                     throw new AssertionError("Can't reach here");
-                } else if (pointedComponentRawType.isRecord()) {
-                    pointedComponentSizeAndData = InternalUtils.recordLayoutSize(pointedComponentType);
+                } else if (Utils.isStruct(pointedComponentType)) {
+                    pointedComponentSizeAndData = Utils.recordLayoutSize(pointedComponentType);
                 } else if (pointedComponentRawType == Pointer.class || MemoryAddress.class.isAssignableFrom(pointedComponentRawType) || pointedComponentRawType == String.class) {
-                    pointedComponentSizeAndData = InternalUtils.pointerLayoutSize();
+                    pointedComponentSizeAndData = Utils.pointerLayoutSize();
                 } else {
                     throw new AssertionError("Unexpected type " + pointedComponentType.getTypeName());
                 }
                 long size = pointedComponentSizeAndData.size();
-                long sizePadding = InternalUtils.align(size, pointedComponentSizeAndData.alignment());
+                long sizePadding = Utils.align(size, pointedComponentSizeAndData.alignment());
                 // -> ... -> pointedArg -> modNewArg -> pointedArg
                 mw.visitInsn(Opcodes.DUP_X1);
                 // -> ... -> pointedArg -> modNewArg -> pointedArg.len
@@ -607,10 +604,10 @@ public class ResultResolver {
                 mw.visitInsn(Opcodes.SWAP);
             }
             long size;
-            if (InternalUtils.isPrimitive(pointedType)) {
-                size = InternalUtils.primitiveLayoutSize(pointedType).size();
-            } else if (pointedRawType.isRecord()) {
-                size = InternalUtils.recordLayoutSize(pointedType).size();
+            if (Utils.isPrimitive(pointedType)) {
+                size = Utils.primitiveLayoutSize(pointedType).size();
+            } else if (Utils.isStruct(pointedType)) {
+                size = Utils.recordLayoutSize(pointedType).size();
             } else if (pointedRawType == Pointer.class || pointedRawType == String.class || MemoryAddress.class.isAssignableFrom(pointedRawType)) {
                 size = CLinker.C_POINTER.byteSize();
             } else {

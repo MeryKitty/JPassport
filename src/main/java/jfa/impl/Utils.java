@@ -1,32 +1,33 @@
-package jpassport.impl;
+package jfa.impl;
 
 import java.lang.reflect.*;
 import java.util.*;
 import jdk.incubator.foreign.*;
 
-import jpassport.NativeLong;
-import jpassport.Pointer;
-import jpassport.annotations.Layout;
-import jpassport.annotations.Length;
+import jfa.NativeLong;
+import jfa.Pointer;
+import jfa.annotations.Layout;
+import jfa.annotations.Length;
 
-public class InternalUtils {
+public class Utils {
 
     public static Class<?> wrapPrimitive(AnnotatedType annotatedType) {
         if (!isValidType(annotatedType)) {
             throw new IllegalArgumentException("Illegal type " + annotatedType);
         }
-        var rawType = rawType(annotatedType.getType());
-        if (isPrimitive(rawType)) {
-            return rawType;
-        } else if (rawType == NativeLong.class) {
-            if (CLinker.C_LONG.byteSize() == 4) {
-                return int.class;
-            } else if (CLinker.C_LONG.byteSize() == 8) {
-                return long.class;
+        var type = annotatedType.getType();
+        var rawType = rawType(type);
+        if (isPrimitive(type)) {
+            if (rawType == NativeLong.class) {
+                if (CLinker.C_LONG.byteSize() == 4) {
+                    return int.class;
+                } else {
+                    return long.class;
+                }
             } else {
-                throw new AssertionError("Unexpected native long size " + CLinker.C_LONG.byteSize());
+                return rawType;
             }
-        } else if (rawType.isRecord() || rawType.isArray()) {
+        } else if (isStruct(type) || rawType.isArray()) {
             return MemorySegment.class;
         } else if (rawType == Pointer.class || rawType == String.class) {
             return MemoryAddress.class;
@@ -41,14 +42,14 @@ public class InternalUtils {
 
     public static boolean isValidType(AnnotatedType annotatedType) {
         // Check struct dependency, including circularity
-        var checkedTypeList = new ArrayList<AnnotatedType>();
-        var pendingTypeList = new ArrayList<AnnotatedType>();
-        pendingTypeList.add(annotatedType);
+        var checkedTypeList = new ArrayList<Type>();
+        var pendingTypeList = new ArrayList<Type>();
+        pendingTypeList.add(annotatedType.getType());
         var rawType = rawType(annotatedType.getType());
-        if (rawType.isArray() && !annotatedType.isAnnotationPresent(Length.class)) {
+        if (rawType.isArray()) {
             return false;
-        } else if (MemorySegment.class.isAssignableFrom(rawType) && !annotatedType.isAnnotationPresent(Layout.class)) {
-            return false;
+        } else if (MemorySegment.class.isAssignableFrom(rawType)) {
+            return annotatedType.isAnnotationPresent(Layout.class);
         }
 
         boolean valid = true;
@@ -62,61 +63,60 @@ public class InternalUtils {
         return valid;
     }
 
-    private static boolean traverseTypeTrace(AnnotatedType annotatedType, List<AnnotatedType> checkedAnnotatedTypeList, List<AnnotatedType> pendingAnnotatedTypeList) {
-        var encounteredTypeList = new ArrayList<AnnotatedType>();
-        var traverseStack = new ArrayDeque<AnnotatedType>();
-        boolean valid = traverseTypeTraceHelper(annotatedType, Collections.unmodifiableList(checkedAnnotatedTypeList), encounteredTypeList, traverseStack, pendingAnnotatedTypeList);
+    private static boolean traverseTypeTrace(Type type, List<Type> checkedTypeList, List<Type> pendingTypeList) {
+        var encounteredTypeList = new ArrayList<Type>();
+        var traverseStack = new ArrayDeque<Type>();
+        boolean valid = traverseTypeTraceHelper(type, Collections.unmodifiableList(checkedTypeList), encounteredTypeList, traverseStack, pendingTypeList);
         if (valid) {
-            checkedAnnotatedTypeList.addAll(encounteredTypeList);
+            checkedTypeList.addAll(encounteredTypeList);
         }
         return valid;
     }
 
-    private static boolean traverseTypeTraceHelper(AnnotatedType currentAnnotatedType, List<AnnotatedType> checkedAnnotatedTypeList, List<AnnotatedType> encounteredAnnotatedTypeList, Deque<AnnotatedType> traverseStack, List<AnnotatedType> pendingAnnotatedTypeList) {
-        if (traverseStack.contains(currentAnnotatedType)) {
+    private static boolean traverseTypeTraceHelper(Type currentType, List<Type> checkedTypeList, List<Type> encounteredTypeList, Deque<Type> traverseStack, List<Type> pendingTypeList) {
+        if (traverseStack.contains(currentType)) {
             return false;
-        } else if (checkedAnnotatedTypeList.contains(currentAnnotatedType)) {
+        } else if (checkedTypeList.contains(currentType)) {
             return true;
-        } else if (encounteredAnnotatedTypeList.contains(currentAnnotatedType)) {
+        } else if (encounteredTypeList.contains(currentType)) {
             return true;
         }
         boolean valid = true;
-        var rawType = rawType(currentAnnotatedType.getType());
-        if (!(isPrimitive(rawType)
+        var rawType = rawType(currentType);
+        if (!(isPrimitive(currentType)
                 || rawType.isArray()
-                || rawType.isRecord()
+                || isStruct(currentType)
                 || rawType == Pointer.class
                 || rawType == String.class
-                || MemorySegment.class.isAssignableFrom(rawType)
                 || MemoryAddress.class.isAssignableFrom(rawType))) {
             return false;
         }
-
-        traverseStack.push(currentAnnotatedType);
-        encounteredAnnotatedTypeList.add(currentAnnotatedType);
+        traverseStack.push(currentType);
+        encounteredTypeList.add(currentType);
         if (rawType.isArray()) {
-            if (!currentAnnotatedType.isAnnotationPresent(Length.class)) {
-                valid = traverseStack.size() == 1;
-            }
-            if (currentAnnotatedType instanceof AnnotatedArrayType a) {
-                valid = valid && traverseTypeTraceHelper(a.getAnnotatedGenericComponentType(), checkedAnnotatedTypeList, encounteredAnnotatedTypeList, traverseStack, pendingAnnotatedTypeList);
+            Type componentType;
+            if (currentType instanceof GenericArrayType g) {
+                componentType = g.getGenericComponentType();
+            } else if (currentType instanceof Class<?> c) {
+                componentType = c.componentType();
             } else {
-                throw new AssertionError();
+                throw new AssertionError("Unexpected type " + currentType + ", " + currentType.getClass());
             }
-        } else if (rawType.isRecord()) {
+            valid = traverseTypeTraceHelper(componentType, checkedTypeList, encounteredTypeList, traverseStack, pendingTypeList);
+        } else if (isStruct(currentType)) {
             for (var component : rawType.getRecordComponents()) {
-                if (!traverseTypeTraceHelper(component.getAnnotatedType(), checkedAnnotatedTypeList, encounteredAnnotatedTypeList, traverseStack, pendingAnnotatedTypeList)) {
+                if (component.getType().isArray() && !component.isAnnotationPresent(Length.class)) {
+                    valid = false;
+                    break;
+                }
+                if (!traverseTypeTraceHelper(component.getGenericType(), checkedTypeList, encounteredTypeList, traverseStack, pendingTypeList)) {
                     valid = false;
                     break;
                 }
             }
         } else if (rawType == Pointer.class) {
-            if (currentAnnotatedType instanceof AnnotatedParameterizedType p) {
-                valid = p.getAnnotatedActualTypeArguments().length == 1;
-                pendingAnnotatedTypeList.add(p.getAnnotatedActualTypeArguments()[0]);
-            }
-        } else if (MemorySegment.class.isAssignableFrom(rawType)) {
-            valid = traverseStack.size() == 1 && !checkedAnnotatedTypeList.isEmpty() && currentAnnotatedType.isAnnotationPresent(Layout.class) && currentAnnotatedType.getAnnotation(Layout.class).value().isRecord();
+            var p = (ParameterizedType) currentType;
+            pendingTypeList.add(p.getActualTypeArguments()[0]);
         }
         traverseStack.pop();
         return valid;
@@ -210,12 +210,12 @@ public class InternalUtils {
         var componentRawType = rawType(componentType);
         long size;
         long align;
-        if (InternalUtils.isPrimitive(componentType)) {
+        if (Utils.isPrimitive(componentType)) {
             size = cDescription(componentRawType).byteSize() * length;
             align = cDescription(componentRawType).byteSize();
         } else if (componentRawType.isArray()) {
             throw new AssertionError("Can't reach here");
-        } else if (componentRawType.isRecord()) {
+        } else if (isStruct(componentType)) {
             var componentSizeAndAlign = recordLayoutSize(componentRawType);
             long componentSizeAfterAlign = align(componentSizeAndAlign.size(), componentSizeAndAlign.alignment());
             size = componentSizeAfterAlign * (length - 1) + componentSizeAndAlign.size();
@@ -242,7 +242,7 @@ public class InternalUtils {
         long currentOffset = 0;
         long maxAlignment = 0;
         for (var component : rawType.getRecordComponents()) {
-            var componentSizeAndAlign = layoutSize(component.getAnnotatedType());
+            var componentSizeAndAlign = layoutSize(component.getGenericType(), Optional.ofNullable(component.getAnnotation(Length.class)));
             if (maxAlignment < componentSizeAndAlign.alignment()) {
                 maxAlignment = componentSizeAndAlign.alignment();
             }
@@ -268,23 +268,25 @@ public class InternalUtils {
         return rawType.isPrimitive() || rawType == NativeLong.class;
     }
 
-    public static SizeData layoutSize(AnnotatedType annotatedType) {
-        var type = annotatedType.getType();
+    public static boolean isStruct(Type type) {
+        var rawType = rawType(type);
+        return rawType.isRecord() && rawType != NativeLong.class;
+    }
+
+    public static SizeData layoutSize(Type type, Optional<Length> arrayLength) {
         var rawType = rawType(type);
         SizeData currentSizeAlign;
-        if (InternalUtils.isPrimitive(type)) {
-            currentSizeAlign = InternalUtils.primitiveLayoutSize(type);
+        if (Utils.isPrimitive(type)) {
+            currentSizeAlign = Utils.primitiveLayoutSize(type);
         } else if (rawType.isArray()) {
-            int length = annotatedType.getAnnotation(Length.class).value();
-            currentSizeAlign = InternalUtils.arrayLayoutSize(type, length);
-        } else if (rawType.isRecord()) {
-            currentSizeAlign = InternalUtils.recordLayoutSize(type);
+            int length = arrayLength.get().value();
+            currentSizeAlign = Utils.arrayLayoutSize(type, length);
+        } else if (isStruct(type)) {
+            currentSizeAlign = Utils.recordLayoutSize(type);
         } else if (rawType == Pointer.class) {
             currentSizeAlign = new SizeData(CLinker.C_POINTER.byteSize(), CLinker.C_POINTER.byteSize());
         } else if (rawType == String.class) {
             currentSizeAlign = new SizeData(CLinker.C_POINTER.byteSize(), CLinker.C_POINTER.byteSize());
-        } else if (MemorySegment.class.isAssignableFrom(rawType)) {
-            currentSizeAlign = InternalUtils.recordLayoutSize(annotatedType.getAnnotation(Layout.class).value());
         } else if (MemoryAddress.class.isAssignableFrom(rawType)) {
             currentSizeAlign = new SizeData(CLinker.C_POINTER.byteSize(), CLinker.C_POINTER.byteSize());
         } else {

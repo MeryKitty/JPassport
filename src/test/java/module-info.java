@@ -1,14 +1,13 @@
-module jpassport.test {
+module jfa.test {
     requires jdk.incubator.foreign;
     requires jdk.unsupported;
 
-    requires jpassport;
+    requires jfa;
     requires com.sun.jna;
     requires com.sun.jna.platform;
     requires jmh.core;
     requires junit;
     requires commons.csv;
 
-    exports jpassport.test;
-    exports jpassport.test.validity to jpassport;
+    exports jfa.test.validity;
 }
